@@ -199,8 +199,8 @@ const expenseRoutes = require("./src/routes/expense.routes");
 const channelRoutes = require("./src/routes/channel.routes");
 const messageRoutes = require("./src/routes/message.routes");
 const voiceRoutes = require("./src/routes/voice.routes");
-const crmRoutes = require("./src/routes/crm.routes");
 const tenderRoutes = require("./src/routes/tender.routes");
+const rfqRoutes = require('./src/routes/rfq/rfq.routes');
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
@@ -230,12 +230,13 @@ app.use("/api/v1/billing", billingRoutes);
 app.use("/api/v1/pricing-plans", pricingPlanRoutes);
 app.use("/api/v1/timer", timerRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
-app.use("/api/v1/crm", crmRoutes);
 app.use("/api/v1/channels", channelRoutes);
 app.use("/api/v1/messages", messageRoutes);
 app.use("/api/v1/voice", voiceRoutes);
 app.use("/api/v1/expenses", expenseRoutes);
 app.use("/api/v1/tenders", tenderRoutes);
+app.use('/api/v1/crm/rfq', rfqRoutes);
+
 
 // ==================== HEALTH ====================
 app.get("/health", (req, res) => {
