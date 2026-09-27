@@ -1,7 +1,7 @@
 // server.js
 // ==================== DNS OVERRIDE FOR MONGODB SRV ====================
 const dns = require("dns");
-dns.setDefaultResultOrder("ipv4first"); 
+dns.setDefaultResultOrder("ipv4first");
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
 /* ---- Core dependencies ---- */
@@ -201,6 +201,8 @@ const messageRoutes = require("./src/routes/message.routes");
 const voiceRoutes = require("./src/routes/voice.routes");
 const tenderRoutes = require("./src/routes/tender.routes");
 const rfqRoutes = require('./src/routes/rfq/rfq.routes');
+const quotationRoutes = require('./src/routes/quotation/quotation.routes');
+
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
@@ -236,6 +238,7 @@ app.use("/api/v1/voice", voiceRoutes);
 app.use("/api/v1/expenses", expenseRoutes);
 app.use("/api/v1/tenders", tenderRoutes);
 app.use('/api/v1/crm/rfq', rfqRoutes);
+app.use('/api/v1/crm/quotation', quotationRoutes);
 
 
 // ==================== HEALTH ====================
@@ -386,15 +389,23 @@ const startServer = async () => {
 
 // ==================== GRACEFUL SHUTDOWN ====================
 const gracefulShutdown = async () => {
-  console.log("\n\n🛑 Shutting down gracefully...");
+  console.log('\n\n🛑 Shutting down gracefully...');
   if (mongoose.connection.readyState === 1) {
     await mongoose.connection.close();
-    console.log("📦 MongoDB connection closed");
+    console.log('📦 MongoDB connection closed');
   }
   if (io) {
     await io.close();
-    console.log("🔌 Socket.io closed");
+    console.log('🔌 Socket.io closed');
   }
+
+  // ⭐ Close puppeteer
+  try {
+    const { closePdfBrowser } = require('./src/utils/quotationPdf');
+    await closePdfBrowser();
+    console.log('📄 PDF browser closed');
+  } catch { }
+
   process.exit(0);
 };
 
