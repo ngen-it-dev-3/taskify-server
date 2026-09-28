@@ -91,21 +91,18 @@ function toClientShape(doc) {
 }
 
 // ============================================================
-// FILTER BUILDER  ← 🔧 FIXED
+// FILTER BUILDER
 // ============================================================
 function buildFilter(q, includeArchived) {
   const filter = {};
 
   // ---- Stage filter (priority order) ----
   if (q.stage) {
-    // Explicit stage wins (used for "show lost" etc.)
     filter.stage = q.stage;
   } else if (includeArchived) {
-    // "Archived →" → show ONLY archived
     filter.stage = 'archived';
   } else {
-    // Default view → hide archived AND lost
-    filter.stage = { $nin: ['archived', 'lost'] };        // 👈 NEW
+    filter.stage = { $nin: ['archived', 'lost'] };
   }
 
   if (q.country) filter.country = q.country;
@@ -141,6 +138,24 @@ async function generateRfqNumber(date = new Date()) {
     { new: true, upsert: true }
   );
   return `${yy}${mm}${dd}-${counter.seq}`;
+}
+
+// ============================================================
+// DATE HELPERS FOR STATS
+// ============================================================
+function getMonthBoundaries(referenceDate = new Date()) {
+  const now = referenceDate;
+
+  // Start of this month (local time)
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+
+  // Start of last month
+  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+
+  // End of last month (last day, 23:59:59)
+  const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
+  return { startOfThisMonth, startOfLastMonth, endOfLastMonth };
 }
 
 // ============================================================
@@ -343,12 +358,18 @@ const RFQService = {
 
   // ---------- DASHBOARD STATS ----------
   async stats() {
+    // ⭐ Compute month boundaries
+    const { startOfThisMonth, startOfLastMonth, endOfLastMonth } =
+      getMonthBoundaries();
+
     const [
       total,
       pending,
       quoted,
       archived,
       lost,
+      thisMonth,     // ⭐ NEW
+      lastMonth,     // ⭐ NEW
       byCountry,
       bySalesman,
       recent,
@@ -357,7 +378,15 @@ const RFQService = {
       RFQ.countDocuments({ stage: 'pending' }),
       RFQ.countDocuments({ stage: 'quoted' }),
       RFQ.countDocuments({ stage: 'archived' }),
-      RFQ.countDocuments({ stage: 'lost' }),                 // 👈 NEW
+      RFQ.countDocuments({ stage: 'lost' }),
+      // ⭐ Count RFQs created this month
+      RFQ.countDocuments({
+        createdAt: { $gte: startOfThisMonth },
+      }),
+      // ⭐ Count RFQs created last month
+      RFQ.countDocuments({
+        createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth },
+      }),
       RFQ.aggregate([
         { $group: { _id: '$country', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
@@ -376,12 +405,23 @@ const RFQService = {
 
     const quoteRate = total > 0 ? Math.round((quoted / total) * 100) : 0;
 
+    // ⭐ Month-over-month delta
+    let momDelta = 0;
+    if (lastMonth > 0) {
+      momDelta = Math.round(((thisMonth - lastMonth) / lastMonth) * 100);
+    } else if (thisMonth > 0) {
+      momDelta = 100; // growth from zero
+    }
+
     return {
       total,
       pending,
       quoted,
       archived,
-      lost,                                                   // 👈 NEW
+      lost,
+      thisMonth,      // ⭐ NEW
+      lastMonth,      // ⭐ NEW
+      momDelta,       // ⭐ NEW
       quoteRate,
       byCountry: byCountry.map((c) => ({
         country: c._id,
