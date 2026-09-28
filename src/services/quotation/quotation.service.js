@@ -9,37 +9,69 @@ const {
 } = require('./quotation.email.templates');
 
 // ============================================================
-// CALCULATE TOTALS (server-side, mirrors frontend logic)
+// CALCULATE TOTALS
+//
+// Business rules (mirrors frontend exactly):
+//   1. Principal Discount % reduces the COST (supplier-side)
+//   2. Office / Profit / Others margins apply to discounted cost
+//   3. Per-line Disc % applies to the price (client-side)
+//      — gated by meta.discountEnabled
+//   4. Tax is applied to the post-discount amount
+//      — gated by meta.vatEnabled
 // ============================================================
-function computeTotals(lines, rates) {
+function computeTotals(lines, rates, meta = {}) {
     let costOfGoods = 0;
     let officeExpenses = 0;
     let commissionOthers = 0;
     let netProfit = 0;
-    let subTotal = 0;
-    let customerPrice = 0;
+
+    let subTotal = 0;          // pre-discount, pre-tax
+    let discountTotal = 0;     // Σ per-line client discounts
+    let customerPrice = 0;     // post-discount, pre-tax
     let totalWeight = 0;
 
-    for (const l of lines) {
-        const total = (l.qty || 0) * (l.principalCost || 0);
-        const weight = (l.qty || 0) * (l.weightKg || 0);
-        const office = (total * (rates.officePct || 0)) / 100;
-        const profit = (total * (rates.profitPct || 0)) / 100;
-        const others = (total * (rates.othersPct || 0)) / 100;
-        const sub = total + office + profit + others;
-        const discounted = sub * (1 - (l.discountPct || 0) / 100);
+    // ⭐ Principal discount reduces cost basis
+    const principalRate = 1 - (rates.principalDiscountPct || 0) / 100;
 
-        costOfGoods += total;
+    // ⭐ Respect the Special Discount checkbox (default: ON)
+    const discountEnabled = meta.discountEnabled !== false;
+
+    // ⭐ Respect the VAT / GST checkbox (default: ON)
+    const taxEnabled = meta.vatEnabled !== false;
+    const taxPct = rates.taxPct || 0;
+
+    for (const l of lines || []) {
+        const effectiveCost = (l.principalCost || 0) * principalRate;
+        const lineTotal = (l.qty || 0) * effectiveCost;
+        const weight = (l.qty || 0) * (l.weightKg || 0);
+
+        const office = (lineTotal * (rates.officePct || 0)) / 100;
+        const profit = (lineTotal * (rates.profitPct || 0)) / 100;
+        const others = (lineTotal * (rates.othersPct || 0)) / 100;
+
+        const sub = lineTotal + office + profit + others;
+
+        // ⭐ Per-line discount only when enabled
+        const appliedPct = discountEnabled ? (l.discountPct || 0) : 0;
+        const discountAmt = sub * (appliedPct / 100);
+        const discounted = sub - discountAmt;
+
+        costOfGoods += lineTotal;
         officeExpenses += office;
         commissionOthers += others;
         netProfit += profit;
         subTotal += sub;
+        discountTotal += discountAmt;
         customerPrice += discounted;
         totalWeight += weight;
     }
 
+    // ⭐ Tax on post-discount subtotal — only when enabled
     const taxVatGst =
-        (rates.taxPct || 0) === 0 ? 0 : (subTotal * (rates.taxPct || 0)) / 100;
+        !taxEnabled || taxPct === 0
+            ? 0
+            : (customerPrice * taxPct) / 100;
+
     const grandTotal = customerPrice + taxVatGst;
 
     return {
@@ -47,10 +79,13 @@ function computeTotals(lines, rates) {
         officeExpenses,
         commissionOthers,
         netProfit,
-        taxVatGst,
+
         subTotal,
-        grandTotal,
+        discountTotal,
         customerPrice,
+        taxVatGst,
+        grandTotal,
+
         totalWeight,
     };
 }
@@ -113,11 +148,9 @@ async function syncRfqStage(rfqId, stage, userId) {
 const QuotationService = {
     // ---------- CREATE ----------
     async create(dto, userId) {
-        // Validate RFQ exists
         const rfq = await RFQ.findById(dto.rfqId);
         if (!rfq) throw ApiError.notFound('RFQ not found');
 
-        // Generate PQ number
         const countryCode = (rfq.country || 'XX').slice(0, 2).toUpperCase();
         const initials = (rfq.company || 'XX').replace(/[^A-Za-z]/g, '').slice(0, 4);
         const pqNumber = await generatePqNumber({
@@ -127,7 +160,15 @@ const QuotationService = {
             style: 'long',
         });
 
-        const totals = computeTotals(dto.lines || [], dto.rates || {});
+        // ⭐ Pass checkbox flags into computeTotals
+        const totals = computeTotals(
+            dto.lines || [],
+            dto.rates || {},
+            {
+                vatEnabled: dto.vatEnabled,
+                discountEnabled: dto.discountEnabled,
+            }
+        );
 
         const doc = new Quotation({
             pqNumber,
@@ -162,6 +203,9 @@ const QuotationService = {
             totals,
             createdBy: userId,
         });
+
+        // ⭐ Force Mongoose to persist nested source fields on first save
+        doc.markModified('lines');
 
         await doc.save();
         return toClientShape(doc);
@@ -220,7 +264,6 @@ const QuotationService = {
             throw ApiError.badRequest('Only drafts can be edited');
         }
 
-        // Update fields
         if (dto.client) doc.client = { ...doc.client, ...dto.client };
         if (dto.clientType) doc.clientType = dto.clientType;
         if (dto.territory) doc.territory = dto.territory;
@@ -231,14 +274,23 @@ const QuotationService = {
         if (dto.vatEnabled !== undefined) doc.vatEnabled = dto.vatEnabled;
         if (dto.discountEnabled !== undefined) doc.discountEnabled = dto.discountEnabled;
         if (dto.pqrNumber) doc.pqrNumber = dto.pqrNumber;
-        if (dto.lines) doc.lines = dto.lines;
+
+        if (dto.lines) {
+            doc.lines = dto.lines;
+            // ⭐ Force Mongoose to see the nested change (source1/2/3)
+            doc.markModified('lines');
+        }
+
         if (dto.rates) doc.rates = dto.rates;
         if (dto.logistics) doc.logistics = dto.logistics;
         if (dto.terms) doc.terms = dto.terms;
         if (dto.stage) doc.stage = dto.stage;
 
-        // Recompute totals
-        doc.totals = computeTotals(doc.lines, doc.rates);
+        // ⭐ Recompute totals using the persisted checkbox state
+        doc.totals = computeTotals(doc.lines, doc.rates, {
+            vatEnabled: doc.vatEnabled,
+            discountEnabled: doc.discountEnabled,
+        });
         doc.updatedBy = userId;
 
         await doc.save();
@@ -256,6 +308,12 @@ const QuotationService = {
         if (doc.status === 'won' || doc.status === 'lost') {
             throw ApiError.badRequest(`Quotation is already ${doc.status}`);
         }
+
+        // ⭐ Recompute totals just before sending to reflect latest state
+        doc.totals = computeTotals(doc.lines, doc.rates, {
+            vatEnabled: doc.vatEnabled,
+            discountEnabled: doc.discountEnabled,
+        });
 
         const clientShape = toClientShape(doc);
 
@@ -275,7 +333,6 @@ const QuotationService = {
                 console.log(`📎 PDF generated (${(pdfBuffer.length / 1024).toFixed(1)} KB) for ${doc.pqNumber}`);
             } catch (e) {
                 console.error('[quotation.send] PDF generation failed:', e.message);
-                // Don't block sending if PDF fails
             }
         }
 
@@ -326,9 +383,13 @@ const QuotationService = {
         doc.sentAt = new Date();
         doc.validUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         doc.updatedBy = userId;
+
+        // ⭐ Force Mongoose to see nested changes if any sources were added since last save
+        doc.markModified('lines');
+
         await doc.save();
 
-        // ⭐ CASCADE: mark parent RFQ as 'quoted' so dashboard stats update
+        // ⭐ CASCADE: mark parent RFQ as 'quoted'
         await syncRfqStage(doc.rfqId, 'quoted', userId);
 
         return toClientShape(doc);
@@ -348,7 +409,7 @@ const QuotationService = {
 
         await doc.save();
 
-        // ⭐ CASCADE: approved quotes also flip parent RFQ to 'quoted'
+        // ⭐ CASCADE
         await syncRfqStage(doc.rfqId, 'quoted', userId);
 
         return toClientShape(doc);
@@ -368,11 +429,9 @@ const QuotationService = {
         doc.updatedBy = userId;
         await doc.save();
 
-        // ⭐ CASCADE: if lost, mark the parent RFQ lost too (keeps dashboard in sync)
         if (outcome === 'lost') {
             await syncRfqStage(doc.rfqId, 'lost', userId);
         }
-        // NOTE: 'won' stays at RFQ stage 'quoted' since RFQ has no 'won' stage
 
         return toClientShape(doc);
     },
