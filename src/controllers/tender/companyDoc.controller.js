@@ -25,7 +25,7 @@ function computeStatus(doc) {
   }
   const now = Date.now();
   const diffDays = Math.ceil(
-    (new Date(doc.validUntil).getTime() - now) / 86400000,
+    (new Date(doc.validUntil).getTime() - now) / 86400000
   );
   if (diffDays < 0) return { ...doc, status: "Expired", action: "Renew" };
   if (diffDays <= 30) return { ...doc, status: "Expiring Soon", action: "Renew" };
@@ -36,21 +36,117 @@ function computeStatus(doc) {
   };
 }
 
-function buildChipFilter({ sector, duration, volume }) {
-  const chipFilters = [];
-  if (sector && sector !== "all") chipFilters.push(sector);
-  if (duration && duration !== "all") chipFilters.push(duration);
-  if (volume && volume !== "all") chipFilters.push(volume);
+/* ============================================================
+ * ⭐ FILTER HELPERS — Numeric comparison
+ * ============================================================ */
 
-  if (chipFilters.length === 0) return null;
-  if (chipFilters.length === 1) return chipFilters[0];
-  return { $all: chipFilters };
+/**
+ * Parse a duration filter like "3+ Yrs" → 3
+ */
+function parseDurationFilter(filter) {
+  if (!filter || filter === "all") return 0;
+  const m = String(filter).match(/(\d+)/);
+  return m ? Number(m[1]) : 0;
 }
 
-/* Projection for list views — excludes the heavy importedInto array
- * and internal tracking fields. Cuts payload size by ~40%. */
-const LIST_PROJECTION =
-  "-importedInto -createdBy -updatedBy -__v";
+/**
+ * Parse a volume filter like "৳10L+" → 1000000
+ * ৳ = BDT
+ * L = Lakh = 100,000
+ * Cr = Crore = 10,000,000
+ * K = Thousand = 1,000
+ */
+function parseVolumeFilter(filter) {
+  if (!filter || filter === "all") return 0;
+  const clean = String(filter).replace(/[৳$,+\s]/g, "");
+  const m = clean.match(/^(\d+(?:\.\d+)?)(L|Cr|K)?$/i);
+  if (!m) return 0;
+  const value = Number(m[1]);
+  const unit = (m[2] || "").toLowerCase();
+  if (unit === "cr") return value * 10_000_000;
+  if (unit === "l") return value * 100_000;
+  if (unit === "k") return value * 1_000;
+  return value;
+}
+
+/**
+ * Extract years from an entry string like "92+ Yrs" → 92
+ */
+function parseEntryYears(raw) {
+  if (raw == null) return 0;
+  if (typeof raw === "number") return raw;
+  const m = String(raw).match(/(\d+)/);
+  return m ? Number(m[1]) : 0;
+}
+
+/**
+ * Extract amount from an entry string like "৳70L+" → 7,000,000
+ */
+function parseEntryVolume(raw) {
+  if (raw == null) return 0;
+  if (typeof raw === "number") return raw;
+  return parseVolumeFilter(String(raw));
+}
+
+/**
+ * Given a document, extract its duration number (years).
+ * Tries: chips array → duration field → yearsOfExperience field
+ */
+function extractDocYears(doc) {
+  if (!doc) return 0;
+
+  // 1. Direct field
+  if (doc.duration !== undefined && doc.duration !== null) {
+    return parseEntryYears(doc.duration);
+  }
+  if (doc.yearsOfExperience !== undefined && doc.yearsOfExperience !== null) {
+    return parseEntryYears(doc.yearsOfExperience);
+  }
+
+  // 2. From chips array — find chip matching /Yr|year/i
+  const chips = Array.isArray(doc.chips) ? doc.chips : [];
+  const durationChip = chips.find((c) => /Yr|year/i.test(String(c)));
+  if (durationChip) return parseEntryYears(durationChip);
+
+  return 0;
+}
+
+/**
+ * Given a document, extract its volume amount.
+ * Tries: chips array → volume field → projectVolume field
+ */
+function extractDocVolume(doc) {
+  if (!doc) return 0;
+
+  // 1. Direct field
+  if (doc.volume !== undefined && doc.volume !== null) {
+    return parseEntryVolume(doc.volume);
+  }
+  if (doc.projectVolume !== undefined && doc.projectVolume !== null) {
+    return parseEntryVolume(doc.projectVolume);
+  }
+
+  // 2. From chips array — find chip matching currency or L+/Cr
+  const chips = Array.isArray(doc.chips) ? doc.chips : [];
+  const volumeChip = chips.find((c) => /[৳$]|L\+|Cr/i.test(String(c)));
+  if (volumeChip) return parseEntryVolume(volumeChip);
+
+  return 0;
+}
+
+/**
+ * Build the MongoDB query.
+ * Sector is exact chip match, duration + volume are numeric filters applied in-memory.
+ */
+function buildQuery({ category, sector }) {
+  const query = {};
+  if (category && category !== "all") query.category = category;
+  if (sector && sector !== "all") query.chips = sector;
+  return query;
+}
+
+/* Projection for list views */
+const LIST_PROJECTION = "-importedInto -createdBy -updatedBy -__v";
 
 /* ============================================================
  * LIST — category + optional filters
@@ -60,15 +156,24 @@ const listDocs = async (req, res) => {
   try {
     const { category, sector, duration, volume, status } = req.query;
 
-    const query = {};
-    if (category && category !== "all") query.category = category;
+    const query = buildQuery({ category, sector });
 
-    const chipFilter = buildChipFilter({ sector, duration, volume });
-    if (chipFilter) query.chips = chipFilter;
-
-    const rows = await CompanyDocument.find(query, LIST_PROJECTION)
+    // Fetch matching docs
+    let rows = await CompanyDocument.find(query, LIST_PROJECTION)
       .sort({ createdAt: -1 })
       .lean();
+
+    // ⭐ Apply duration filter numerically
+    if (duration && duration !== "all") {
+      const required = parseDurationFilter(duration);
+      rows = rows.filter((d) => extractDocYears(d) >= required);
+    }
+
+    // ⭐ Apply volume filter numerically
+    if (volume && volume !== "all") {
+      const required = parseVolumeFilter(volume);
+      rows = rows.filter((d) => extractDocVolume(d) >= required);
+    }
 
     let enriched = rows.map(computeStatus);
 
@@ -97,22 +202,28 @@ const listAndCounts = async (req, res) => {
   try {
     const { category, sector, duration, volume, status } = req.query;
 
-    const query = {};
-    if (category && category !== "all") query.category = category;
+    const query = buildQuery({ category, sector });
 
-    const chipFilter = buildChipFilter({ sector, duration, volume });
-    if (chipFilter) query.chips = chipFilter;
-
-    /* Parallel: list + counts aggregation */
-    const [rows, countsAgg] = await Promise.all([
+    /* Parallel: list + counts */
+    const [rawRows, countsAgg] = await Promise.all([
       CompanyDocument.find(query, LIST_PROJECTION)
         .sort({ createdAt: -1 })
         .lean(),
-
       CompanyDocument.aggregate([
         { $group: { _id: "$category", count: { $sum: 1 } } },
       ]),
     ]);
+
+    // ⭐ Apply duration + volume numeric filters
+    let rows = rawRows;
+    if (duration && duration !== "all") {
+      const required = parseDurationFilter(duration);
+      rows = rows.filter((d) => extractDocYears(d) >= required);
+    }
+    if (volume && volume !== "all") {
+      const required = parseVolumeFilter(volume);
+      rows = rows.filter((d) => extractDocVolume(d) >= required);
+    }
 
     let enriched = rows.map(computeStatus);
 
@@ -166,12 +277,12 @@ const createDoc = async (req, res) => {
     const {
       category,
       title,
-      description,          // ← new
+      description,
       reference,
       validity,
       validityDate,
       issuedOn,
-      subtitle,             // ← legacy / experience
+      subtitle,
       chips,
       fileUrl,
       docType,
@@ -183,8 +294,6 @@ const createDoc = async (req, res) => {
         .json({ success: false, message: "category and title are required" });
     }
 
-    /* For profile category, prefer `description`; fall back to `subtitle`
-     * so existing clients that still send `subtitle` keep working. */
     const finalDescription =
       category === "profiles"
         ? (description || subtitle || "").trim()
@@ -229,7 +338,7 @@ const updateDoc = async (req, res) => {
 
     const allowed = [
       "title",
-      "description",       // ← new
+      "description",
       "reference",
       "validity",
       "subtitle",
@@ -306,7 +415,6 @@ const deleteDoc = async (req, res) => {
         .json({ success: false, message: "Document not found" });
     }
 
-    /* Remove file from disk first (fire-and-forget) */
     if (doc.fileUrl) {
       try {
         const prev = path.basename(doc.fileUrl);
@@ -350,7 +458,7 @@ const importDocsToTender = async (req, res) => {
             importedBy: req.user._id,
           },
         },
-      },
+      }
     );
 
     res.json({
@@ -375,7 +483,6 @@ const uploadDocFile = async (req, res) => {
         .json({ success: false, message: "No file uploaded" });
     }
 
-    /* Update via findOneAndUpdate to avoid loading + saving the whole doc */
     const prev = await CompanyDocument.findById(req.params.id)
       .select("fileUrl")
       .lean();
@@ -383,13 +490,12 @@ const uploadDocFile = async (req, res) => {
     if (!prev) {
       try {
         fs.unlinkSync(req.file.path);
-      } catch { }
+      } catch {}
       return res
         .status(404)
         .json({ success: false, message: "Document not found" });
     }
 
-    /* Remove old file from disk */
     if (prev.fileUrl) {
       try {
         const oldName = path.basename(prev.fileUrl);
@@ -411,7 +517,7 @@ const uploadDocFile = async (req, res) => {
         fileMime: req.file.mimetype,
         updatedBy: req.user._id,
       },
-      { new: true },
+      { new: true }
     ).lean();
 
     console.log("[uploadDocFile] ✅ saved:", newUrl);
