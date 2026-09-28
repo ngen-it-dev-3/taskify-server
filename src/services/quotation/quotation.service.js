@@ -8,6 +8,9 @@ const {
     quotationSentTemplate,
 } = require('./quotation.email.templates');
 
+// ⭐ Statuses that can be edited without creating a new version
+const EDITABLE_STATUSES = ['draft', 'awaiting_approval', 'sent'];
+
 // ============================================================
 // CALCULATE TOTALS
 //
@@ -260,8 +263,12 @@ const QuotationService = {
         const doc = await Quotation.findById(id);
         if (!doc) throw ApiError.notFound('Quotation not found');
 
-        if (doc.status !== 'draft' && doc.status !== 'awaiting_approval') {
-            throw ApiError.badRequest('Only drafts can be edited');
+        // ⭐ Allow editing draft, awaiting_approval, AND sent
+        // (Won/Lost/Expired are terminal — cannot be edited)
+        if (!EDITABLE_STATUSES.includes(doc.status)) {
+            throw ApiError.badRequest(
+                `Cannot edit — quotation is "${doc.status}". Create a new version to continue.`
+            );
         }
 
         if (dto.client) doc.client = { ...doc.client, ...dto.client };
