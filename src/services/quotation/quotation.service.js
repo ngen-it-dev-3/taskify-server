@@ -92,6 +92,22 @@ function toClientShape(doc) {
 }
 
 // ============================================================
+// HELPER: cascade stage change to parent RFQ
+// ============================================================
+async function syncRfqStage(rfqId, stage, userId) {
+    if (!rfqId) return;
+    try {
+        await RFQ.updateOne(
+            { _id: rfqId, stage: { $nin: ['archived'] } },
+            { $set: { stage, updatedBy: userId } }
+        );
+        console.log(`🔗 RFQ ${rfqId} stage → ${stage}`);
+    } catch (e) {
+        console.error(`[quotation.syncRfqStage] failed to update RFQ ${rfqId}:`, e.message);
+    }
+}
+
+// ============================================================
 // SERVICE
 // ============================================================
 const QuotationService = {
@@ -305,12 +321,15 @@ const QuotationService = {
             console.error('[quotation.send] admin email failed:', e.message);
         }
 
-        // ---- Update status ----
+        // ---- Update quotation status ----
         doc.status = 'sent';
         doc.sentAt = new Date();
         doc.validUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         doc.updatedBy = userId;
         await doc.save();
+
+        // ⭐ CASCADE: mark parent RFQ as 'quoted' so dashboard stats update
+        await syncRfqStage(doc.rfqId, 'quoted', userId);
 
         return toClientShape(doc);
     },
@@ -328,6 +347,10 @@ const QuotationService = {
         doc.updatedBy = userId;
 
         await doc.save();
+
+        // ⭐ CASCADE: approved quotes also flip parent RFQ to 'quoted'
+        await syncRfqStage(doc.rfqId, 'quoted', userId);
+
         return toClientShape(doc);
     },
 
@@ -344,6 +367,13 @@ const QuotationService = {
         doc.closedAt = new Date();
         doc.updatedBy = userId;
         await doc.save();
+
+        // ⭐ CASCADE: if lost, mark the parent RFQ lost too (keeps dashboard in sync)
+        if (outcome === 'lost') {
+            await syncRfqStage(doc.rfqId, 'lost', userId);
+        }
+        // NOTE: 'won' stays at RFQ stage 'quoted' since RFQ has no 'won' stage
+
         return toClientShape(doc);
     },
 
