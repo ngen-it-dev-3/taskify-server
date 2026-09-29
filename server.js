@@ -202,6 +202,7 @@ const voiceRoutes = require("./src/routes/voice.routes");
 const tenderRoutes = require("./src/routes/tender.routes");
 const rfqRoutes = require('./src/routes/rfq/rfq.routes');
 const quotationRoutes = require('./src/routes/quotation/quotation.routes');
+const salesCrmRoutes = require('./src/routes/salesCrm/salesCrm.routes');
 
 
 app.use("/api/v1/auth", authRoutes);
@@ -239,6 +240,7 @@ app.use("/api/v1/expenses", expenseRoutes);
 app.use("/api/v1/tenders", tenderRoutes);
 app.use('/api/v1/crm/rfq', rfqRoutes);
 app.use('/api/v1/crm/quotation', quotationRoutes);
+app.use('/api/v1/sales-crm', salesCrmRoutes); 
 
 
 // ==================== HEALTH ====================

@@ -1,15 +1,13 @@
 // src/services/quotation/quotation.service.js
 const Quotation = require('../../models/Quotation.model');
 const RFQ = require('../../models/rfq/RFQ');
+const { SalesCrmService } = require('../salesCrm/salesCrm.service');   // ⭐ NEW
 const { ApiError } = require('../../utils/rfq/ApiError');
 const { generatePqNumber } = require('../../utils/quotationNumber');
 const { sendMail } = require('../../utils/sendEmail');
 const {
     quotationSentTemplate,
 } = require('./quotation.email.templates');
-
-// ⭐ Statuses that can be edited without creating a new version
-const EDITABLE_STATUSES = ['draft', 'awaiting_approval', 'sent'];
 
 // ============================================================
 // CALCULATE TOTALS
@@ -146,6 +144,34 @@ async function syncRfqStage(rfqId, stage, userId) {
 }
 
 // ============================================================
+// HELPER: auto-push quotation to Sales CRM Forecast
+//   Fire-and-forget — never blocks or fails the send flow
+// ============================================================
+function pushToForecastSafely(quotationDoc, userId) {
+    if (!quotationDoc) return;
+
+    // Detach from the current request lifecycle
+    setImmediate(async () => {
+        try {
+            const rfq = quotationDoc.rfqId
+                ? await RFQ.findById(quotationDoc.rfqId).lean()
+                : null;
+
+            await SalesCrmService.pushFromQuotation({
+                quotation: quotationDoc,
+                rfq,
+                userId,
+            });
+        } catch (e) {
+            console.error(
+                `[quotation.pushToForecastSafely] failed for ${quotationDoc.pqNumber}:`,
+                e.message
+            );
+        }
+    });
+}
+
+// ============================================================
 // SERVICE
 // ============================================================
 const QuotationService = {
@@ -263,12 +289,8 @@ const QuotationService = {
         const doc = await Quotation.findById(id);
         if (!doc) throw ApiError.notFound('Quotation not found');
 
-        // ⭐ Allow editing draft, awaiting_approval, AND sent
-        // (Won/Lost/Expired are terminal — cannot be edited)
-        if (!EDITABLE_STATUSES.includes(doc.status)) {
-            throw ApiError.badRequest(
-                `Cannot edit — quotation is "${doc.status}". Create a new version to continue.`
-            );
+        if (doc.status !== 'draft' && doc.status !== 'awaiting_approval') {
+            throw ApiError.badRequest('Only drafts can be edited');
         }
 
         if (dto.client) doc.client = { ...doc.client, ...dto.client };
@@ -399,6 +421,11 @@ const QuotationService = {
         // ⭐ CASCADE: mark parent RFQ as 'quoted'
         await syncRfqStage(doc.rfqId, 'quoted', userId);
 
+        // ⭐ AUTO-PUSH TO SALES CRM FORECAST
+        //    Fire-and-forget — doesn't block the response, can't fail the send.
+        //    Idempotent: skips if a forecast entry already exists for this quotation.
+        pushToForecastSafely(doc, userId);
+
         return toClientShape(doc);
     },
 
@@ -418,6 +445,9 @@ const QuotationService = {
 
         // ⭐ CASCADE
         await syncRfqStage(doc.rfqId, 'quoted', userId);
+
+        // ⭐ AUTO-PUSH TO SALES CRM FORECAST
+        pushToForecastSafely(doc, userId);
 
         return toClientShape(doc);
     },
