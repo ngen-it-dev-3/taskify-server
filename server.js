@@ -203,6 +203,7 @@ const tenderRoutes = require("./src/routes/tender.routes");
 const rfqRoutes = require('./src/routes/rfq/rfq.routes');
 const quotationRoutes = require('./src/routes/quotation/quotation.routes');
 const salesCrmRoutes = require('./src/routes/salesCrm/salesCrm.routes');
+const onlineCrmRoutes = require('./src/routes/onlineCrm/onlineCrm.routes');
 
 
 app.use("/api/v1/auth", authRoutes);
@@ -241,6 +242,7 @@ app.use("/api/v1/tenders", tenderRoutes);
 app.use('/api/v1/crm/rfq', rfqRoutes);
 app.use('/api/v1/crm/quotation', quotationRoutes);
 app.use('/api/v1/sales-crm', salesCrmRoutes); 
+app.use('/api/v1/online-crm', onlineCrmRoutes);
 
 
 // ==================== HEALTH ====================

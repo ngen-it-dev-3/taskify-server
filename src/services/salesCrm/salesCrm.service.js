@@ -275,37 +275,109 @@ const SalesCrmService = {
         };
     },
 
-    // ---------- FORECAST TREND (monthly bars) ----------
+    // ---------- FORECAST TREND ----------
+    /**
+     * Two modes:
+     *   - No `month` param  → 12 monthly bars (Jan..Dec)
+     *   - With `month=Sep`  → daily bars (Sep 1..Sep 30) for that month
+     *
+     * Daily buckets use the entry's `createdAt` timestamp.
+     * Monthly buckets use the entry's `month` label (as before).
+     */
     async getForecastTrend(q = {}) {
-        const filter = buildFilter({ ...q, month: undefined }); // trend across all months
+        const selectedMonth = q.month && q.month !== 'all' ? q.month : null;
+
+        if (!selectedMonth) {
+            // ================== MONTHLY MODE ==================
+            const filter = buildFilter({ ...q, month: undefined });
+            const rows = await ForecastEntry.find(filter).lean();
+
+            const trend = MONTHS.map((m) => ({
+                month: m,
+                closed: 0,
+                open: 0,
+                noActivity: true,
+            }));
+
+            const byMonth = {};
+            for (const r of rows) {
+                const m = r.month;
+                if (!m) continue;
+                if (!byMonth[m]) byMonth[m] = { closed: 0, open: 0 };
+                if (r.stage === 'won') byMonth[m].closed += r.value || 0;
+                if (r.stage === 'quotation' || r.stage === 'negotiation')
+                    byMonth[m].open += r.value || 0;
+            }
+
+            return trend.map((t) => {
+                const stats = byMonth[t.month] || { closed: 0, open: 0 };
+                return {
+                    key: t.month,          // ⭐ NEW — unified field
+                    label: t.month,        // ⭐ NEW — what to render as the x-axis label
+                    month: t.month,        // keep for backward compat
+                    closed: stats.closed,
+                    open: stats.open,
+                    noActivity: stats.closed === 0 && stats.open === 0,
+                };
+            });
+        }
+
+        // ================== DAILY MODE ==================
+        // Figure out the year we're looking at:
+        //   use q.dateFrom/dateTo if provided, else current year
+        const refDate = q.dateFrom ? new Date(q.dateFrom) : new Date();
+        const year = refDate.getFullYear();
+        const monthIdx = MONTHS.indexOf(selectedMonth);
+
+        if (monthIdx < 0) {
+            throw ApiError.badRequest(`Invalid month: ${selectedMonth}`);
+        }
+
+        // Day 1..last day of selected month
+        const firstDay = new Date(Date.UTC(year, monthIdx, 1, 0, 0, 0));
+        const lastDay = new Date(Date.UTC(year, monthIdx + 1, 0, 23, 59, 59));
+        const daysInMonth = lastDay.getUTCDate();
+
+        // Pull all rows in scope for the selected month's window
+        const filter = buildFilter({ ...q, month: undefined });
+        filter.createdAt = { $gte: firstDay, $lte: lastDay };
+
         const rows = await ForecastEntry.find(filter).lean();
 
-        const trend = MONTHS.map((m) => ({
-            month: m,
-            closed: 0,         // won
-            open: 0,           // quotation + negotiation
+        // Pre-fill 1..N buckets
+        const buckets = Array.from({ length: daysInMonth }, (_, i) => ({
+            key: `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(
+                i + 1
+            ).padStart(2, '0')}`,
+            label: String(i + 1).padStart(2, '0'), // '01', '02', ...
+            closed: 0,
+            open: 0,
             noActivity: true,
         }));
 
-        const byMonth = {};
         for (const r of rows) {
-            const m = r.month;
-            if (!m) continue;
-            if (!byMonth[m]) byMonth[m] = { closed: 0, open: 0 };
-            if (r.stage === 'won') byMonth[m].closed += r.value || 0;
+            if (!r.createdAt) continue;
+            const d = new Date(r.createdAt);
+            // Skip anything that fell outside the window (edge cases with TZ)
+            if (
+                d.getUTCFullYear() !== year ||
+                d.getUTCMonth() !== monthIdx
+            ) {
+                continue;
+            }
+            const dayIdx = d.getUTCDate() - 1;
+            if (dayIdx < 0 || dayIdx >= buckets.length) continue;
+
+            if (r.stage === 'won') buckets[dayIdx].closed += r.value || 0;
             if (r.stage === 'quotation' || r.stage === 'negotiation')
-                byMonth[m].open += r.value || 0;
+                buckets[dayIdx].open += r.value || 0;
         }
 
-        return trend.map((t) => {
-            const stats = byMonth[t.month] || { closed: 0, open: 0 };
-            return {
-                month: t.month,
-                closed: stats.closed,
-                open: stats.open,
-                noActivity: stats.closed === 0 && stats.open === 0,
-            };
-        });
+        return buckets.map((b) => ({
+            ...b,
+            month: selectedMonth, // for backward compat with old shape
+            noActivity: b.closed === 0 && b.open === 0,
+        }));
     },
 
     // ---------- BREAKDOWN (by country | stage | source) ----------
