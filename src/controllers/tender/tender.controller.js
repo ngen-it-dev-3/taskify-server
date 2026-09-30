@@ -328,6 +328,10 @@ const changeStage = async (req, res) => {
       tender.lostAt = new Date();
       if (lossReason) tender.lossReason = lossReason;
     }
+    // ⭐ Set wonAt when tender is marked as won
+    if (stage === "won") {
+      tender.wonAt = new Date();
+    }
 
     tender.stageHistory.push({
       from: fromStage,
@@ -338,6 +342,22 @@ const changeStage = async (req, res) => {
     });
 
     await tender.save();
+
+    // ⭐ NEW — When a tender transitions TO "won", push it to Sales CRM Forecast
+    if (stage === "won" && fromStage !== "won") {
+      try {
+        const { SalesCrmService } = require("../../services/salesCrm/salesCrm.service");
+        await SalesCrmService.pushFromTender({
+          tender,
+          userId: req.user?._id || req.user?.id,
+          userName: req.user?.fullName || req.user?.name || req.user?.email,
+        });
+      } catch (e) {
+        console.error("[changeStage] pushFromTender failed:", e.message);
+        // Don't fail the whole request — just log it
+      }
+    }
+
     res.json({ success: true, data: tender });
   } catch (error) {
     console.error("changeStage error:", error);

@@ -11,14 +11,6 @@ const {
 
 // ============================================================
 // CALCULATE TOTALS
-//
-// Business rules (mirrors frontend exactly):
-//   1. Principal Discount % reduces the COST (supplier-side)
-//   2. Office / Profit / Others margins apply to discounted cost
-//   3. Per-line Disc % applies to the price (client-side)
-//      — gated by meta.discountEnabled
-//   4. Tax is applied to the post-discount amount
-//      — gated by meta.vatEnabled
 // ============================================================
 function computeTotals(lines, rates, meta = {}) {
     let costOfGoods = 0;
@@ -26,18 +18,13 @@ function computeTotals(lines, rates, meta = {}) {
     let commissionOthers = 0;
     let netProfit = 0;
 
-    let subTotal = 0;          // pre-discount, pre-tax
-    let discountTotal = 0;     // Σ per-line client discounts
-    let customerPrice = 0;     // post-discount, pre-tax
+    let subTotal = 0;
+    let discountTotal = 0;
+    let customerPrice = 0;
     let totalWeight = 0;
 
-    // ⭐ Principal discount reduces cost basis
     const principalRate = 1 - (rates.principalDiscountPct || 0) / 100;
-
-    // ⭐ Respect the Special Discount checkbox (default: ON)
     const discountEnabled = meta.discountEnabled !== false;
-
-    // ⭐ Respect the VAT / GST checkbox (default: ON)
     const taxEnabled = meta.vatEnabled !== false;
     const taxPct = rates.taxPct || 0;
 
@@ -52,7 +39,6 @@ function computeTotals(lines, rates, meta = {}) {
 
         const sub = lineTotal + office + profit + others;
 
-        // ⭐ Per-line discount only when enabled
         const appliedPct = discountEnabled ? (l.discountPct || 0) : 0;
         const discountAmt = sub * (appliedPct / 100);
         const discounted = sub - discountAmt;
@@ -67,7 +53,6 @@ function computeTotals(lines, rates, meta = {}) {
         totalWeight += weight;
     }
 
-    // ⭐ Tax on post-discount subtotal — only when enabled
     const taxVatGst =
         !taxEnabled || taxPct === 0
             ? 0
@@ -80,13 +65,11 @@ function computeTotals(lines, rates, meta = {}) {
         officeExpenses,
         commissionOthers,
         netProfit,
-
         subTotal,
         discountTotal,
         customerPrice,
         taxVatGst,
         grandTotal,
-
         totalWeight,
     };
 }
@@ -146,11 +129,14 @@ async function syncRfqStage(rfqId, stage, userId) {
 // ============================================================
 // HELPER: auto-push quotation to Sales CRM Forecast
 //   Fire-and-forget — never blocks or fails the send flow
+//
+//   ⭐ FIXED: now accepts and forwards `userName` so the forecast
+//             entry can fall back to the logged-in user when the
+//             RFQ / quotation has no assigned owner.
 // ============================================================
-function pushToForecastSafely(quotationDoc, userId) {
+function pushToForecastSafely(quotationDoc, userId, userName) {
     if (!quotationDoc) return;
 
-    // Detach from the current request lifecycle
     setImmediate(async () => {
         try {
             const rfq = quotationDoc.rfqId
@@ -161,6 +147,7 @@ function pushToForecastSafely(quotationDoc, userId) {
                 quotation: quotationDoc,
                 rfq,
                 userId,
+                userName,   // ⭐ NEW — forwarded to forecast service
             });
         } catch (e) {
             console.error(
@@ -189,7 +176,6 @@ const QuotationService = {
             style: 'long',
         });
 
-        // ⭐ Pass checkbox flags into computeTotals
         const totals = computeTotals(
             dto.lines || [],
             dto.rates || {},
@@ -233,7 +219,6 @@ const QuotationService = {
             createdBy: userId,
         });
 
-        // ⭐ Force Mongoose to persist nested source fields on first save
         doc.markModified('lines');
 
         await doc.save();
@@ -306,7 +291,6 @@ const QuotationService = {
 
         if (dto.lines) {
             doc.lines = dto.lines;
-            // ⭐ Force Mongoose to see the nested change (source1/2/3)
             doc.markModified('lines');
         }
 
@@ -315,7 +299,6 @@ const QuotationService = {
         if (dto.terms) doc.terms = dto.terms;
         if (dto.stage) doc.stage = dto.stage;
 
-        // ⭐ Recompute totals using the persisted checkbox state
         doc.totals = computeTotals(doc.lines, doc.rates, {
             vatEnabled: doc.vatEnabled,
             discountEnabled: doc.discountEnabled,
@@ -338,7 +321,11 @@ const QuotationService = {
             throw ApiError.badRequest(`Quotation is already ${doc.status}`);
         }
 
-        // ⭐ Recompute totals just before sending to reflect latest state
+        // ⭐ Ensure crmManager is set — fall back to logged-in user
+        if (!doc.crmManager && userName) {
+            doc.crmManager = userName;
+        }
+
         doc.totals = computeTotals(doc.lines, doc.rates, {
             vatEnabled: doc.vatEnabled,
             discountEnabled: doc.discountEnabled,
@@ -346,7 +333,7 @@ const QuotationService = {
 
         const clientShape = toClientShape(doc);
 
-        // ---- Build optional PDF attachment ----
+        // ---- PDF attachment ----
         let attachments = [];
         if (dto.withAttachment) {
             try {
@@ -365,7 +352,7 @@ const QuotationService = {
             }
         }
 
-        // ---- Send email to CLIENT ----
+        // ---- Email to client ----
         if (doc.client?.email) {
             try {
                 const { sendMail } = require('../../utils/sendEmail');
@@ -386,7 +373,7 @@ const QuotationService = {
             }
         }
 
-        // ---- Send email to ADMIN / CRM Team ----
+        // ---- Email to admin ----
         const adminEmail = process.env.QUOTATION_ADMIN_EMAIL || 'crm.me@ngenitltd.com';
         try {
             const { sendMail } = require('../../utils/sendEmail');
@@ -407,32 +394,32 @@ const QuotationService = {
             console.error('[quotation.send] admin email failed:', e.message);
         }
 
-        // ---- Update quotation status ----
+        // ---- Update status ----
         doc.status = 'sent';
         doc.sentAt = new Date();
         doc.validUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         doc.updatedBy = userId;
 
-        // ⭐ Force Mongoose to see nested changes if any sources were added since last save
         doc.markModified('lines');
 
         await doc.save();
 
-        // ⭐ CASCADE: mark parent RFQ as 'quoted'
         await syncRfqStage(doc.rfqId, 'quoted', userId);
 
-        // ⭐ AUTO-PUSH TO SALES CRM FORECAST
-        //    Fire-and-forget — doesn't block the response, can't fail the send.
-        //    Idempotent: skips if a forecast entry already exists for this quotation.
-        pushToForecastSafely(doc, userId);
+        // ⭐ AUTO-PUSH TO SALES CRM FORECAST — now passes userName
+        pushToForecastSafely(doc, userId, userName);
 
         return toClientShape(doc);
     },
 
-    // ---------- APPROVE (manager action) ----------
-    async approve(id, userId) {
+    // ---------- APPROVE ----------
+    async approve(id, userId, userName) {
         const doc = await Quotation.findById(id);
         if (!doc) throw ApiError.notFound('Quotation not found');
+
+        if (!doc.crmManager && userName) {
+            doc.crmManager = userName;
+        }
 
         doc.status = 'sent';
         doc.approvedAt = new Date();
@@ -443,11 +430,10 @@ const QuotationService = {
 
         await doc.save();
 
-        // ⭐ CASCADE
         await syncRfqStage(doc.rfqId, 'quoted', userId);
 
-        // ⭐ AUTO-PUSH TO SALES CRM FORECAST
-        pushToForecastSafely(doc, userId);
+        // ⭐ AUTO-PUSH TO SALES CRM FORECAST — now passes userName
+        pushToForecastSafely(doc, userId, userName || 'Manager');
 
         return toClientShape(doc);
     },

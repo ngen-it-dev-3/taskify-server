@@ -45,26 +45,45 @@ const QuotationController = {
         } catch (err) { next(err); }
     },
 
+    // ⭐ FIXED: pass userId + userName consistently
     async send(req, res, next) {
         try {
             const userId = req.user?._id || req.user?.id;
-            const userName = req.user?.fullName || req.user?.name || 'CRM Admin';
+            const userName =
+                req.user?.fullName ||
+                req.user?.name ||
+                req.user?.email ||
+                'CRM Admin';
+
             const data = await QuotationService.send(
                 req.params.id,
                 { withAttachment: req.body?.withAttachment === true },
                 userId,
                 userName
             );
+
             res.json(ApiResponse.ok(data, 'Quotation sent'));
         } catch (err) {
             next(err);
         }
     },
 
+    // ⭐ FIXED: pass userName so crmManager fallback works
     async approve(req, res, next) {
         try {
             const userId = req.user?._id || req.user?.id;
-            const data = await QuotationService.approve(req.params.id, userId);
+            const userName =
+                req.user?.fullName ||
+                req.user?.name ||
+                req.user?.email ||
+                'Manager';
+
+            const data = await QuotationService.approve(
+                req.params.id,
+                userId,
+                userName
+            );
+
             res.json(ApiResponse.ok(data, 'Quotation approved'));
         } catch (err) { next(err); }
     },
