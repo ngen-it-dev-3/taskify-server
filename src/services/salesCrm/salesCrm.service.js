@@ -669,7 +669,7 @@ const SalesCrmService = {
             country: quotation.client?.country || rfq?.country || 'Bangladesh',
             region: quotation.client?.country || rfq?.country || 'Bangladesh',
             owner: resolvedOwner,
-
+            // Quotation and RFQ references for traceability
             quotationId: quotation._id,
             rfqId: rfq?._id || quotation.rfqId,
             rfqNumber: quotation.rfqNumber || rfq?.rfqNumber || '',
