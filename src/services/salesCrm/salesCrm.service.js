@@ -201,6 +201,8 @@ const SalesCrmService = {
         const doc = await ForecastEntry.findById(id);
         if (!doc) throw ApiError.notFound('Forecast entry not found');
 
+        const previousStage = doc.stage;
+
         const patchable = [
             'client', 'item', 'value', 'probability', 'month', 'stage',
             'source', 'note', 'country', 'region', 'owner',
@@ -210,12 +212,24 @@ const SalesCrmService = {
         for (const key of patchable) {
             if (dto[key] !== undefined) doc[key] = dto[key];
         }
-
-        if (doc.probability < 0) doc.probability = 0;
-        if (doc.probability > 100) doc.probability = 100;
-
+        // ... probability clamp ...
         doc.updatedBy = userId?._id || userId || null;
         await doc.save();
+
+        // ⭐ NEW: if stage changed TO 'won', create Sales Order
+        if (doc.stage === 'won' && previousStage !== 'won') {
+            try {
+                const { SalesOrderService } = require('../salesOrder/salesOrder.service');
+                await SalesOrderService.createFromWon({
+                    source: 'sales-crm',
+                    forecastEntry: doc,
+                    userId,
+                });
+            } catch (e) {
+                console.error('[salesCrm.updateEntry] Sales Order creation failed:', e.message);
+            }
+        }
+
         return toClientShape(doc);
     },
 
@@ -386,33 +400,110 @@ const SalesCrmService = {
         return { total, by, entries };
     },
 
+    // ---------- BY SALESPERSON (leaderboard) ----------
     async getBySalesperson(q = {}) {
+        // ⭐ month + other filters flow through via buildFilter
         const filter = buildFilter(q);
         const rows = await ForecastEntry.find(filter).lean();
 
         const map = {};
-        let grandTotal = 0, grandCount = 0;
+        let grandTotal = 0;
+        let grandCount = 0;
+        let grandWon = 0;
+        let grandLost = 0;
+        let grandOpen = 0;
 
         for (const r of rows) {
             const owner = extractOwnerName(r.owner) || 'Unassigned';
+
             if (!map[owner]) {
-                map[owner] = { name: owner, total: 0, count: 0, entries: [] };
+                map[owner] = {
+                    name: owner,
+                    // totals
+                    total: 0,          // all value
+                    wonValue: 0,       // value of won entries
+                    openValue: 0,      // value of open (query/rfq/quotation/negotiation)
+                    lostValue: 0,      // value of lost entries
+                    weighted: 0,       // probability-adjusted
+                    // counts
+                    count: 0,          // all entries
+                    wonCount: 0,
+                    lostCount: 0,
+                    openCount: 0,
+                    // derived
+                    winRate: 0,
+                    avgDealSize: 0,
+                    entries: [],
+                };
             }
-            map[owner].total += r.value || 0;
-            map[owner].count += 1;
-            map[owner].entries.push({
+
+            const bucket = map[owner];
+            const val = r.value || 0;
+            const prob = r.probability || 0;
+
+            bucket.total += val;
+            bucket.count += 1;
+            bucket.weighted += Math.round((val * prob) / 100);
+
+            if (r.stage === 'won') {
+                bucket.wonValue += val;
+                bucket.wonCount += 1;
+                grandWon += val;
+            } else if (r.stage === 'lost') {
+                bucket.lostValue += val;
+                bucket.lostCount += 1;
+                grandLost += val;
+            } else {
+                // query | rfq | quotation | negotiation
+                bucket.openValue += val;
+                bucket.openCount += 1;
+                grandOpen += val;
+            }
+
+            bucket.entries.push({
                 id: r._id.toString(),
                 client: r.client,
+                item: r.item,
                 stage: r.stage,
-                value: r.value,
+                value: val,
+                probability: prob,
+                month: r.month,
+                createdAt: r.createdAt,
             });
 
-            grandTotal += r.value || 0;
+            grandTotal += val;
             grandCount += 1;
         }
 
-        const people = Object.values(map).sort((a, b) => b.total - a.total);
-        return { total: grandTotal, count: grandCount, people };
+        // Finalize derived fields per person
+        const people = Object.values(map).map((p) => {
+            const decided = p.wonCount + p.lostCount;
+            const winRate = decided > 0 ? Math.round((p.wonCount / decided) * 100) : 0;
+            const avgDealSize = p.count > 0 ? Math.round(p.total / p.count) : 0;
+            return { ...p, winRate, avgDealSize };
+        });
+
+        // Sort by won value desc, then open value desc, then total
+        people.sort((a, b) => {
+            if (b.wonValue !== a.wonValue) return b.wonValue - a.wonValue;
+            if (b.openValue !== a.openValue) return b.openValue - a.openValue;
+            return b.total - a.total;
+        });
+
+        const totalDecided = people.reduce((s, p) => s + p.wonCount + p.lostCount, 0);
+        const totalWonCount = people.reduce((s, p) => s + p.wonCount, 0);
+        const overallWinRate =
+            totalDecided > 0 ? Math.round((totalWonCount / totalDecided) * 100) : 0;
+
+        return {
+            total: grandTotal,
+            count: grandCount,
+            won: grandWon,
+            lost: grandLost,
+            open: grandOpen,
+            winRate: overallWinRate,
+            people,
+        };
     },
 
     // ---------- SALES REPORT (FY26 target vs achieved) ----------
@@ -517,8 +608,17 @@ const SalesCrmService = {
         });
 
         await doc.save();
+
+        // ⭐ Auto-capture to Client 360
+        try {
+            const { Client360Service } = require('../client360/client360.service');
+            await Client360Service.autoCaptureFromForecast(doc, userId);
+        } catch (e) {
+            console.error('[salesCrm.service] Client 360 auto-capture failed:', e.message);
+        }
+
         console.log(
-            `📈 Forecast entry created for Won Tender "${tender.title}" (৳${doc.value.toLocaleString()}) — owner: "${resolvedOwner || '(blank)'}"`
+            `📈 Forecast entry created for ${quotation.pqNumber} (৳${doc.value.toLocaleString()}) — owner: "${resolvedOwner || '(blank)'}"`
         );
 
         return toClientShape(doc);

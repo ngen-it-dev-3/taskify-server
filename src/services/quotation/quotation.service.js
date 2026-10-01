@@ -222,6 +222,15 @@ const QuotationService = {
         doc.markModified('lines');
 
         await doc.save();
+
+        // ⭐ Auto-capture to Client 360
+        try {
+            const { Client360Service } = require('../client360/client360.service');
+            await Client360Service.autoCaptureFromQuotation(doc, userId);
+        } catch (e) {
+            console.error('[quotation.service] Client 360 auto-capture failed:', e.message);
+        }
+
         return toClientShape(doc);
     },
 
@@ -443,10 +452,8 @@ const QuotationService = {
         if (!['won', 'lost'].includes(outcome)) {
             throw ApiError.badRequest('Outcome must be "won" or "lost"');
         }
-
         const doc = await Quotation.findById(id);
         if (!doc) throw ApiError.notFound('Quotation not found');
-
         doc.status = outcome;
         doc.closedAt = new Date();
         doc.updatedBy = userId;
@@ -454,6 +461,20 @@ const QuotationService = {
 
         if (outcome === 'lost') {
             await syncRfqStage(doc.rfqId, 'lost', userId);
+        }
+
+        // ⭐ NEW: Auto-create Sales Order when won
+        if (outcome === 'won') {
+            try {
+                const { SalesOrderService } = require('../salesOrder/salesOrder.service');
+                await SalesOrderService.createFromWon({
+                    source: 'quotation',
+                    quotation: doc,
+                    userId,
+                });
+            } catch (e) {
+                console.error('[quotation.markOutcome] Sales Order creation failed:', e.message);
+            }
         }
 
         return toClientShape(doc);

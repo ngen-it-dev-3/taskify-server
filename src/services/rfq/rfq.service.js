@@ -217,6 +217,15 @@ const RFQService = {
     });
 
     await doc.save();
+
+    // ⭐ Auto-capture to Client 360
+    try {
+      const { Client360Service } = require('../client360/client360.service');
+      await Client360Service.autoCaptureFromRfq(doc, userId);
+    } catch (e) {
+      console.error('[rfq.service] Client 360 auto-capture failed:', e.message);
+    }
+
     return toClientShape(doc);
   },
 

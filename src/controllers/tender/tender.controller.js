@@ -226,6 +226,16 @@ const createTender = async (req, res) => {
       ],
     });
 
+    try {
+      const { Client360Service } = require("../../services/client360/client360.service");
+      await Client360Service.autoCaptureFromTender(
+        tender,
+        req.user?._id || req.user?.id
+      );
+    } catch (e) {
+      console.error("[tender.controller] Client 360 auto-capture failed:", e.message);
+    }
+
     res.status(201).json({ success: true, data: tender });
   } catch (error) {
     console.error("createTender error:", error);
@@ -344,17 +354,28 @@ const changeStage = async (req, res) => {
     await tender.save();
 
     // ⭐ NEW — When a tender transitions TO "won", push it to Sales CRM Forecast
+    // ⭐ When a tender transitions TO "won" → push to Sales CRM + create Sales Order
     if (stage === "won" && fromStage !== "won") {
+      const userId = req.user?._id || req.user?.id;
+      const userName = req.user?.fullName || req.user?.name || req.user?.email;
+
       try {
         const { SalesCrmService } = require("../../services/salesCrm/salesCrm.service");
-        await SalesCrmService.pushFromTender({
-          tender,
-          userId: req.user?._id || req.user?.id,
-          userName: req.user?.fullName || req.user?.name || req.user?.email,
-        });
+        await SalesCrmService.pushFromTender({ tender, userId, userName });
       } catch (e) {
         console.error("[changeStage] pushFromTender failed:", e.message);
-        // Don't fail the whole request — just log it
+      }
+
+      // ⭐ Create Sales Order
+      try {
+        const { SalesOrderService } = require("../../services/salesOrder/salesOrder.service");
+        await SalesOrderService.createFromWon({
+          source: "tender",
+          tender,
+          userId,
+        });
+      } catch (e) {
+        console.error("[changeStage] Sales Order creation failed:", e.message);
       }
     }
 

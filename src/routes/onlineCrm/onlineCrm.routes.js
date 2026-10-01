@@ -16,7 +16,6 @@ const createQuerySchema = {
 };
 
 const updateQuerySchema = {
-  // All optional — PATCH semantics
   company: { type: 'string', max: 200 },
   country: { type: 'string', max: 100 },
   value: { type: 'number' },
@@ -27,7 +26,16 @@ const bulkDeleteSchema = {
 };
 
 // ============================================================
-// STATIC ROUTES FIRST (before :id)
+// ⭐ UNIFIED ROUTES (first — no :id conflicts)
+// ============================================================
+router.get('/unified', OnlineCrmController.unifiedList);
+router.get('/unified/stats', OnlineCrmController.unifiedStats);
+router.get('/unified/monthly-volume', OnlineCrmController.unifiedMonthly);
+router.get('/unified/by-country', OnlineCrmController.unifiedByCountry);
+router.get('/unified/top-products', OnlineCrmController.unifiedTop);
+
+// ============================================================
+// EXISTING — OnlineQuery endpoints (unchanged)
 // ============================================================
 
 // ---- Aggregations ----
@@ -45,14 +53,12 @@ router.post(
   OnlineCrmController.createQuery
 );
 
-// ---- Bulk delete (before /queries/:id) ----
 router.post(
   '/queries/bulk-delete',
   validateBody(bulkDeleteSchema),
   OnlineCrmController.bulkRemove
 );
 
-// ---- Single-query routes ----
 router.get('/queries/:id', OnlineCrmController.getById);
 router.patch(
   '/queries/:id',

@@ -204,6 +204,9 @@ const rfqRoutes = require('./src/routes/rfq/rfq.routes');
 const quotationRoutes = require('./src/routes/quotation/quotation.routes');
 const salesCrmRoutes = require('./src/routes/salesCrm/salesCrm.routes');
 const onlineCrmRoutes = require('./src/routes/onlineCrm/onlineCrm.routes');
+const dmarRoutes = require('./src/routes/dmr/dmar.routes');
+const client360Routes = require('./src/routes/client360/client360.routes');
+const salesOrderRoutes = require('./src/routes/salesOrder/salesOrder.routes');
 
 
 app.use("/api/v1/auth", authRoutes);
@@ -243,6 +246,10 @@ app.use('/api/v1/crm/rfq', rfqRoutes);
 app.use('/api/v1/crm/quotation', quotationRoutes);
 app.use('/api/v1/sales-crm', salesCrmRoutes); 
 app.use('/api/v1/online-crm', onlineCrmRoutes);
+app.use('/api/v1/dmar', dmarRoutes);
+app.use('/api/v1/clients', client360Routes);
+app.use('/api/v1/sales-orders', salesOrderRoutes);
+
 
 
 // ==================== HEALTH ====================
