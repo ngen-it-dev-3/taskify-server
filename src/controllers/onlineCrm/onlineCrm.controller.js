@@ -4,7 +4,7 @@ const { ApiResponse } = require('../../utils/rfq/ApiResponse');
 
 const OnlineCrmController = {
   // ============================================================
-  // EXISTING — OnlineQuery CRUD (unchanged)
+  // EXISTING — OnlineQuery CRUD
   // ============================================================
 
   async listQueries(req, res, next) {
@@ -104,7 +104,7 @@ const OnlineCrmController = {
   },
 
   // ============================================================
-  // ⭐ UNIFIED — Merge RFQ + Tender + Quotation + OnlineQuery
+  // UNIFIED
   // ============================================================
 
   async unifiedList(req, res, next) {
@@ -121,9 +121,12 @@ const OnlineCrmController = {
     } catch (err) { next(err); }
   },
 
+  // ⭐ SIMPLIFIED — the auth middleware already populated req.user
+  //    with the full user document (has fullName, email, _id, role, roles).
   async unifiedStats(req, res, next) {
     try {
-      const data = await OnlineCrmService.unifiedStats(req.query);
+      // req.user is now a full Mongoose user doc from auth.middleware
+      const data = await OnlineCrmService.unifiedStats(req.query, req.user);
       res.json(ApiResponse.ok(data));
     } catch (err) { next(err); }
   },
@@ -145,6 +148,12 @@ const OnlineCrmController = {
   async unifiedTop(req, res, next) {
     try {
       const data = await OnlineCrmService.unifiedTopProducts(req.query);
+      res.json(ApiResponse.ok(data));
+    } catch (err) { next(err); }
+  },
+  async unifiedDaily(req, res, next) {
+    try {
+      const data = await OnlineCrmService.unifiedDailyVolume(req.query);
       res.json(ApiResponse.ok(data));
     } catch (err) { next(err); }
   },

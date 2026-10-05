@@ -3,12 +3,15 @@ const OnlineQuery = require('../../models/onlineCrm/OnlineQuery.model');
 const RFQ = require('../../models/rfq/RFQ');
 const Quotation = require('../../models/Quotation.model');
 const Tender = require('../../models/Tender.model');
+const { User } = require('../../models/User.model');   // ⭐ ADDED
+const { Department } = require('../../models/Department.model');
 const { ApiError } = require('../../utils/rfq/ApiError');
 
 const {
   STAGES,
   SOURCES,
   STATUSES,
+  CURRENCIES,
 } = require('../../models/onlineCrm/OnlineQuery.model');
 
 const MONTHS = [
@@ -17,7 +20,111 @@ const MONTHS = [
 ];
 
 // ============================================================
-// SHAPE FOR FRONTEND (OnlineQuery only)
+// WHITELIST — every field the client can create or update
+// ============================================================
+const UPDATABLE_FIELDS = [
+  'company', 'country', 'product', 'productCategory', 'description',
+  'referenceLink', 'recordedBy',
+  'assigned', 'responsiblePerson',
+  'source',
+  'value', 'bidValue', 'currency',
+  'stage', 'status', 'draft',
+  'lastDateOfPurchase', 'lastDateOfSubmission', 'submittedAt',
+  'mode', 'participate', 'docStatus',
+  'securityAmount', 'securityValidity', 'performanceSecurityValidity',
+  'contactName', 'contactPhone', 'contactEmail', 'contactAddress',
+  'comments', 'note', 'eligibility',
+  'rfqId',
+  'date',
+];
+
+function pickUpdatable(payload = {}) {
+  const out = {};
+  for (const key of UPDATABLE_FIELDS) {
+    if (payload[key] !== undefined) out[key] = payload[key];
+  }
+  return out;
+}
+
+function toDate(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+function toNumber(value, fallback = null) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+// ============================================================
+// ⭐ FETCH CRM-DIVISION USERS
+// ============================================================
+async function fetchCrmUsers() {
+  try {
+    // Step 1 — Find the CRM department by name
+    // (Try exact match first, then fuzzy)
+    let crmDept = await Department.findOne({
+      name: { $regex: /^crm$/i },
+    })
+      .select('_id name')
+      .lean();
+
+    if (!crmDept) {
+      // Fuzzy fallback — match any department containing "crm"
+      crmDept = await Department.findOne({
+        name: { $regex: /crm/i },
+      })
+        .select('_id name')
+        .lean();
+    }
+
+    if (!crmDept) {
+      // Log available departments to help debug
+      const allDepts = await Department.find({}, { name: 1 })
+        .limit(30)
+        .lean();
+      console.log(
+        '[fetchCrmUsers] No CRM department found. Available:',
+        allDepts.map((d) => d.name)
+      );
+      return [];
+    }
+
+    console.log(
+      '[fetchCrmUsers] Found CRM dept:',
+      crmDept.name,
+      '(_id:', crmDept._id + ')'
+    );
+
+    // Step 2 — Find all active users in that department.
+    // The user schema has BOTH `department` and `departmentId` as
+    // ObjectIds referencing Department — so we check both.
+    const users = await User.find({
+      isActive: { $ne: false },
+      $or: [
+        { department: crmDept._id },
+        { departmentId: crmDept._id },
+      ],
+    })
+      .select('fullName name email role')
+      .limit(20)
+      .lean();
+
+    console.log('[fetchCrmUsers] matched', users.length, 'CRM users');
+
+    return users.map((u) => ({
+      name: u.fullName || u.name || u.email || 'Unknown',
+      email: u.email || '',
+      role: u.role || 'employee',
+    }));
+  } catch (e) {
+    console.warn('[fetchCrmUsers] failed:', e.message);
+    return [];
+  }
+}
+// ============================================================
+// SHAPE FOR FRONTEND
 // ============================================================
 function toClientShape(doc) {
   const d = doc.toObject ? doc.toObject() : doc;
@@ -25,7 +132,9 @@ function toClientShape(doc) {
   const daysAging = d.date
     ? Math.max(
       0,
-      Math.floor((Date.now() - new Date(d.date).getTime()) / (1000 * 60 * 60 * 24))
+      Math.floor(
+        (Date.now() - new Date(d.date).getTime()) / (1000 * 60 * 60 * 24)
+      )
     )
     : 0;
 
@@ -33,16 +142,50 @@ function toClientShape(doc) {
     id: d._id.toString(),
     rfqNumber: d.rfqNumber,
     date: d.date,
+    draft: !!d.draft,
+
     company: d.company,
     country: d.country,
     product: d.product,
     productCategory: d.productCategory,
+    description: d.description || '',
+
+    referenceLink: d.referenceLink || '',
+    recordedBy: d.recordedBy || '',
+
     assigned: d.assigned,
+    responsiblePerson: d.responsiblePerson || '',
+
     source: d.source,
+
     value: d.value,
+    bidValue: d.bidValue ?? 0,
+    currency: d.currency || 'BDT',
+
     stage: d.stage,
     status: d.status,
-    comments: d.comments,
+
+    lastDateOfPurchase: d.lastDateOfPurchase || null,
+    lastDateOfSubmission: d.lastDateOfSubmission || null,
+    submittedAt: d.submittedAt || null,
+
+    mode: d.mode || '',
+    participate: d.participate || '',
+    docStatus: d.docStatus || '',
+
+    securityAmount: d.securityAmount ?? 0,
+    securityValidity: d.securityValidity || null,
+    performanceSecurityValidity: d.performanceSecurityValidity || null,
+
+    contactName: d.contactName || '',
+    contactPhone: d.contactPhone || '',
+    contactEmail: d.contactEmail || '',
+    contactAddress: d.contactAddress || '',
+
+    comments: d.comments || '',
+    note: d.note || '',
+    eligibility: d.eligibility || '',
+
     daysAging,
     rfqId: d.rfqId?.toString() || null,
     createdAt: d.createdAt,
@@ -56,6 +199,10 @@ function toClientShape(doc) {
 // ============================================================
 function buildFilter(q = {}) {
   const filter = {};
+
+  if (q.includeDrafts !== 'true' && q.draft !== 'true') {
+    filter.draft = { $ne: true };
+  }
 
   if (q.stage && q.stage !== 'all') filter.stage = q.stage;
   if (q.source && q.source !== 'all') filter.source = q.source;
@@ -78,14 +225,40 @@ function buildFilter(q = {}) {
     if (q.dateTo) filter.date.$lte = new Date(q.dateTo);
   }
 
-  if (q.month !== undefined && q.month !== null && q.month !== '') {
+  if (
+    q.month !== undefined &&
+    q.month !== null &&
+    q.month !== '' &&
+    q.month !== 'all'
+  ) {
     const monthNum = Number(q.month);
     if (!Number.isNaN(monthNum) && monthNum >= 0 && monthNum <= 11) {
       const year = q.year ? Number(q.year) : new Date().getFullYear();
       const start = new Date(year, monthNum, 1);
       const end = new Date(year, monthNum + 1, 0, 23, 59, 59);
       filter.date = { $gte: start, $lte: end };
+    } else {
+      const monthNames = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+      ];
+      const idx = monthNames.indexOf(String(q.month).trim());
+      if (idx >= 0) {
+        const year =
+          q.year && q.year !== 'all'
+            ? Number(q.year)
+            : new Date().getFullYear();
+        const start = new Date(year, idx, 1);
+        const end = new Date(year, idx + 1, 0, 23, 59, 59);
+        filter.date = { $gte: start, $lte: end };
+      }
     }
+  } else if (q.year && q.year !== 'all') {
+    const y = Number(q.year);
+    filter.date = {
+      $gte: new Date(y, 0, 1),
+      $lte: new Date(y, 11, 31, 23, 59, 59),
+    };
   }
 
   return filter;
@@ -121,23 +294,15 @@ async function generateRfqNumber() {
 // ============================================================
 // UNIFIED HELPERS
 // ============================================================
-
-/** Extract owner name from a field that might be string / object / ObjectId */
 function extractOwner(v) {
   if (!v) return 'Unassigned';
   if (typeof v === 'string') return v.trim() || 'Unassigned';
   if (typeof v === 'object') {
-    return (
-      v.fullName ||
-      v.name ||
-      v.email ||
-      'Unassigned'
-    );
+    return v.fullName || v.name || v.email || 'Unassigned';
   }
   return 'Unassigned';
 }
 
-/** Days aging from a date */
 function daysAgingFrom(date) {
   if (!date) return 0;
   return Math.max(
@@ -146,17 +311,15 @@ function daysAgingFrom(date) {
   );
 }
 
-/** Derive unified stage from an RFQ */
 function rfqStage(rfq) {
   const s = String(rfq.stage || '').toLowerCase();
   if (s === 'pending') return 'To Start';
   if (s === 'quoted') return 'Quoted';
   if (s === 'lost') return 'Not Quoted';
-  if (s === 'archived') return 'Quoted';   // show archived as Quoted
+  if (s === 'archived') return 'Quoted';
   return 'To Start';
 }
 
-/** Derive unified stage from a Tender */
 function tenderStage(tender) {
   const s = String(tender.stage || '').toLowerCase();
   if (s === 'won' || s === 'submitted') return 'Quoted';
@@ -164,7 +327,6 @@ function tenderStage(tender) {
   return 'To Start';
 }
 
-/** Derive unified stage from a Quotation */
 function quotationStage(q) {
   const s = String(q.status || '').toLowerCase();
   if (s === 'draft' || s === 'awaiting_approval') return 'Not Quoted';
@@ -173,7 +335,6 @@ function quotationStage(q) {
   return 'Not Quoted';
 }
 
-/** Derive unified stage from an OnlineQuery (direct) */
 function onlineQueryStage(q) {
   const s = String(q.stage || '').toLowerCase();
   if (s === 'to start') return 'To Start';
@@ -182,14 +343,12 @@ function onlineQueryStage(q) {
   return 'To Start';
 }
 
-/** Map source label for RFQ → unified `origin` */
 function rfqOrigin(rfq) {
   const src = String(rfq.source || '').toLowerCase();
   if (src === 'online') return 'Portal';
   return 'Manual';
 }
 
-/** Map source label for Tender → unified `origin` */
 function tenderOrigin(tender) {
   const t = String(tender.tenderType || '').toLowerCase();
   if (t.includes('egp')) return 'Portal';
@@ -197,7 +356,6 @@ function tenderOrigin(tender) {
   return 'Site Visit';
 }
 
-/** Map source label for Quotation → unified `origin` */
 function quotationOrigin(q) {
   const src = String(q.source || '').toLowerCase();
   if (src === 'quotation-builder') return 'Portal';
@@ -225,7 +383,7 @@ function normalizeRfq(rfq) {
     daysAging: daysAgingFrom(rfq.createdAt || rfq.date),
     stage: rfqStage(rfq),
     status: rfq.stage,
-    value: null,           // RFQs don't carry monetary value
+    value: null,
     currency: 'BDT',
     raw: rfq._id.toString(),
     createdAt: rfq.createdAt || rfq.date,
@@ -237,13 +395,15 @@ function normalizeTender(tender) {
     id: `tender-${tender._id}`,
     source: 'tender',
     sourceLabel: 'Tender',
-    rfqNumber: tender.tenderer || '',    // show tenderer as the ref
+    rfqNumber: tender.tenderer || '',
     date: tender.createdAt || new Date(),
     company: tender.tenderer || '',
     country: tender.country || '',
     product: tender.title || '',
     productCategory: '',
-    assigned: extractOwner(tender.owner || tender.responsiblePerson || tender.recordedBy),
+    assigned: extractOwner(
+      tender.owner || tender.responsiblePerson || tender.recordedBy
+    ),
     origin: tenderOrigin(tender),
     daysAging: daysAgingFrom(tender.createdAt),
     stage: tenderStage(tender),
@@ -295,7 +455,7 @@ function normalizeOnlineQuery(q) {
     stage: onlineQueryStage(q),
     status: q.status,
     value: q.value || null,
-    currency: 'BDT',
+    currency: q.currency || 'BDT',
     raw: q._id.toString(),
     createdAt: q.createdAt,
   };
@@ -305,65 +465,92 @@ function normalizeOnlineQuery(q) {
 // UNIFIED MERGE
 // ============================================================
 async function fetchUnifiedRows(q = {}) {
-  // Build simple filters for each source (independent per-source)
   const countryFilter = q.country && q.country !== 'all' ? q.country : null;
   const searchFilter = q.search ? String(q.search).trim() : null;
-
   const searchRe = searchFilter ? new RegExp(searchFilter, 'i') : null;
 
-  // ============================================================
-  // Parallel fetch — 4 sources
-  // ============================================================
+  const includeDrafts = q.includeDrafts === 'true' || q.draft === 'true';
+
+  const dateFilter = {};
+  if (q.dateFrom) dateFilter.$gte = new Date(q.dateFrom);
+  if (q.dateTo) dateFilter.$lte = new Date(q.dateTo);
+
+  if (!q.dateFrom && !q.dateTo && q.month && q.month !== 'all') {
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    let idx = -1;
+    const asNum = Number(q.month);
+    if (!Number.isNaN(asNum) && asNum >= 0 && asNum <= 11) {
+      idx = asNum;
+    } else {
+      idx = monthNames.indexOf(String(q.month).trim());
+    }
+    if (idx >= 0) {
+      const year =
+        q.year && q.year !== 'all'
+          ? Number(q.year)
+          : new Date().getFullYear();
+      dateFilter.$gte = new Date(year, idx, 1);
+      dateFilter.$lte = new Date(year, idx + 1, 0, 23, 59, 59);
+    }
+  } else if (!q.dateFrom && !q.dateTo && q.year && q.year !== 'all') {
+    const y = Number(q.year);
+    dateFilter.$gte = new Date(y, 0, 1);
+    dateFilter.$lte = new Date(y, 11, 31, 23, 59, 59);
+  }
+
+  const hasDateFilter = Object.keys(dateFilter).length > 0;
+
   const [rfqs, tenders, quotations, onlineQueries] = await Promise.all([
-    // ---- RFQ ----
     RFQ.find({
       stage: { $nin: ['archived'] },
       ...(countryFilter ? { country: countryFilter } : {}),
       ...(searchRe
         ? { $or: [{ company: searchRe }, { rfqNumber: searchRe }] }
         : {}),
+      ...(hasDateFilter ? { createdAt: dateFilter } : {}),
     })
       .limit(200)
       .lean()
       .catch(() => []),
 
-    // ---- Tender ----
     Tender.find({
       draft: { $ne: true },
       ...(countryFilter ? { country: countryFilter } : {}),
       ...(searchRe
         ? { $or: [{ tenderer: searchRe }, { title: searchRe }] }
         : {}),
+      ...(hasDateFilter ? { createdAt: dateFilter } : {}),
     })
       .limit(200)
       .lean()
       .catch(() => []),
 
-    // ---- Quotation ----
     Quotation.find({
       ...(searchRe
         ? { $or: [{ pqNumber: searchRe }, { 'client.company': searchRe }] }
         : {}),
+      ...(hasDateFilter ? { createdAt: dateFilter } : {}),
     })
       .limit(200)
       .lean()
       .catch(() => []),
 
-    // ---- OnlineQuery ----
     OnlineQuery.find({
+      ...(includeDrafts ? {} : { draft: { $ne: true } }),
       ...(countryFilter ? { country: countryFilter } : {}),
       ...(searchRe
         ? { $or: [{ company: searchRe }, { rfqNumber: searchRe }] }
         : {}),
+      ...(hasDateFilter ? { date: dateFilter } : {}),
     })
       .limit(200)
       .lean()
       .catch(() => []),
   ]);
 
-  // ============================================================
-  // Normalize each → unified row
-  // ============================================================
   const allRows = [
     ...rfqs.map(normalizeRfq),
     ...tenders.map(normalizeTender),
@@ -371,26 +558,17 @@ async function fetchUnifiedRows(q = {}) {
     ...onlineQueries.map(normalizeOnlineQuery),
   ];
 
-  // ============================================================
-  // Filter by stage (if requested)
-  // ============================================================
   let filtered = allRows;
   if (q.stage && q.stage !== 'all') {
     filtered = filtered.filter((r) => r.stage === q.stage);
   }
-
-  // ============================================================
-  // Filter by source (if requested)
-  // ============================================================
   if (q.originSource && q.originSource !== 'all') {
     filtered = filtered.filter((r) => r.source === q.originSource);
   }
 
-  // ============================================================
-  // Sort newest first
-  // ============================================================
   filtered.sort(
-    (a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+    (a, b) =>
+      new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
   );
 
   return filtered;
@@ -400,7 +578,7 @@ async function fetchUnifiedRows(q = {}) {
 // SERVICE
 // ============================================================
 const OnlineCrmService = {
-  // ---------- LIST (unchanged, OnlineQuery only) ----------
+  // ---------- LIST ----------
   async listQueries(q = {}) {
     const page = Math.max(1, Number(q.page) || 1);
     const limit = Math.min(Number(q.limit) || 100, 500);
@@ -440,35 +618,52 @@ const OnlineCrmService = {
     }
 
     const rfqNumber = dto.rfqNumber || (await generateRfqNumber());
+    const picked = pickUpdatable(dto);
+
+    const dateFields = [
+      'lastDateOfPurchase',
+      'lastDateOfSubmission',
+      'submittedAt',
+      'securityValidity',
+      'performanceSecurityValidity',
+    ];
+    for (const f of dateFields) {
+      if (picked[f] !== undefined) {
+        const d = toDate(picked[f]);
+        picked[f] = d || null;
+      }
+    }
+
+    if (picked.value !== undefined) {
+      picked.value = toNumber(picked.value, null);
+    }
+    if (picked.bidValue !== undefined) {
+      picked.bidValue = toNumber(picked.bidValue, 0);
+    }
+    if (picked.securityAmount !== undefined) {
+      picked.securityAmount = toNumber(picked.securityAmount, 0);
+    }
 
     const doc = new OnlineQuery({
       rfqNumber,
       date: dto.date ? new Date(dto.date) : new Date(),
+      ...picked,
       company: String(dto.company).trim(),
       country: String(dto.country).trim(),
-      product: dto.product || '',
-      productCategory: dto.productCategory || '',
-      assigned: dto.assigned || 'Unassigned',
-      source: dto.source || 'Email',
-      value:
-        dto.value === undefined || dto.value === null || dto.value === ''
-          ? null
-          : Number(dto.value),
-      stage: dto.stage || 'To Start',
-      status: dto.status || 'Pending',
-      comments: dto.comments || '',
-      rfqId: dto.rfqId || null,
+      draft: dto.draft === true,
       createdBy: userId || null,
     });
 
     await doc.save();
 
-    // ⭐ Auto-capture to Client 360
     try {
       const { Client360Service } = require('../client360/client360.service');
       await Client360Service.autoCaptureFromOnlineQuery(doc, userId);
     } catch (e) {
-      console.error('[onlineCrm.service] Client 360 auto-capture failed:', e.message);
+      console.error(
+        '[onlineCrm.service] Client 360 auto-capture failed:',
+        e.message
+      );
     }
 
     return toClientShape(doc);
@@ -479,13 +674,33 @@ const OnlineCrmService = {
     const doc = await OnlineQuery.findById(id);
     if (!doc) throw ApiError.notFound('Online query not found');
 
-    const patchable = [
-      'company', 'country', 'product', 'productCategory',
-      'assigned', 'source', 'value', 'stage', 'status', 'comments',
-    ];
+    const picked = pickUpdatable(dto);
 
-    for (const key of patchable) {
-      if (dto[key] !== undefined) doc[key] = dto[key];
+    const dateFields = [
+      'lastDateOfPurchase',
+      'lastDateOfSubmission',
+      'submittedAt',
+      'securityValidity',
+      'performanceSecurityValidity',
+    ];
+    for (const f of dateFields) {
+      if (picked[f] !== undefined) {
+        picked[f] = toDate(picked[f]) || null;
+      }
+    }
+
+    if (picked.value !== undefined) {
+      picked.value = toNumber(picked.value, null);
+    }
+    if (picked.bidValue !== undefined) {
+      picked.bidValue = toNumber(picked.bidValue, 0);
+    }
+    if (picked.securityAmount !== undefined) {
+      picked.securityAmount = toNumber(picked.securityAmount, 0);
+    }
+
+    for (const [key, value] of Object.entries(picked)) {
+      doc[key] = value;
     }
 
     if (dto.date) doc.date = new Date(dto.date);
@@ -510,9 +725,13 @@ const OnlineCrmService = {
     return { deletedCount: result.deletedCount || 0 };
   },
 
-  // ---------- KPI STATS (unchanged, OnlineQuery only) ----------
+  // ---------- KPI STATS ----------
   async stats(q = {}) {
-    const filter = buildFilter({ ...q, stage: undefined, month: undefined });
+    const filter = buildFilter({
+      ...q,
+      stage: undefined,
+      month: undefined,
+    });
 
     const all = await OnlineQuery.find(filter).lean();
 
@@ -532,7 +751,11 @@ const OnlineCrmService = {
       if (r.stage === 'Quoted') {
         quotedCount += 1;
         if (typeof r.value === 'number') {
-          quotedBDT += r.value;
+          if (String(r.currency || 'BDT').toUpperCase().includes('USD')) {
+            quotedUSD += r.value;
+          } else {
+            quotedBDT += r.value;
+          }
         }
       }
       if (r.stage === 'Not Quoted') {
@@ -565,7 +788,7 @@ const OnlineCrmService = {
     };
   },
 
-  // ---------- MONTHLY VOLUME (unchanged) ----------
+  // ---------- MONTHLY VOLUME ----------
   async monthlyVolume(q = {}) {
     const filter = buildFilter({ ...q, month: undefined });
     const rows = await OnlineQuery.find(filter).lean();
@@ -583,7 +806,7 @@ const OnlineCrmService = {
     return { year, months: MONTHS, data: monthly };
   },
 
-  // ---------- BY COUNTRY (unchanged) ----------
+  // ---------- BY COUNTRY ----------
   async byCountry(q = {}) {
     const filter = buildFilter({ ...q, month: undefined });
     const rows = await OnlineQuery.find(filter).lean();
@@ -607,7 +830,7 @@ const OnlineCrmService = {
     return { total, entries };
   },
 
-  // ---------- TOP PRODUCTS (unchanged) ----------
+  // ---------- TOP PRODUCTS ----------
   async topProducts(q = {}) {
     const filter = buildFilter({ ...q, month: undefined });
     const rows = await OnlineQuery.find(filter).lean();
@@ -642,14 +865,12 @@ const OnlineCrmService = {
   },
 
   // ============================================================
-  // ⭐ UNIFIED — Merge RFQ + Tender + Quotation + OnlineQuery
+  // UNIFIED
   // ============================================================
 
-  // ---------- LIST UNIFIED ----------
   async unifiedList(q = {}) {
     const rows = await fetchUnifiedRows(q);
 
-    // Pagination
     const page = Math.max(1, Number(q.page) || 1);
     const limit = Math.min(Number(q.limit) || 200, 500);
     const skip = (page - 1) * limit;
@@ -663,9 +884,111 @@ const OnlineCrmService = {
       totalPages: Math.ceil(rows.length / limit),
     };
   },
+  // ============================================================
+  // ⭐ DAILY VOLUME — fixed version
+  // ============================================================
+  async unifiedDailyVolume(q = {}) {
+    // ----- 1. Normalize month → 0-11 index -----
+    const MONTH_NAMES = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
 
-  // ---------- UNIFIED KPIs ----------
-  async unifiedStats(q = {}) {
+    const rawMonth = q.month;
+    let monthIdx = -1;
+
+    // Try as a number first (0-11)
+    const asNum = Number(rawMonth);
+    if (!Number.isNaN(asNum) && asNum >= 0 && asNum <= 11) {
+      monthIdx = asNum;
+    } else {
+      // Try as a name ("September" / "Sep" / "sept")
+      const s = String(rawMonth || '').trim();
+      if (s) {
+        let idx = MONTH_NAMES.findIndex(
+          (m) => m.toLowerCase() === s.toLowerCase()
+        );
+        if (idx < 0) {
+          // Fuzzy — first 3 chars
+          const prefix = s.slice(0, 3).toLowerCase();
+          idx = MONTH_NAMES.findIndex(
+            (m) => m.toLowerCase().slice(0, 3) === prefix
+          );
+        }
+        if (idx >= 0) monthIdx = idx;
+      }
+    }
+
+    const year = q.year ? Number(q.year) : new Date().getFullYear();
+
+    if (monthIdx < 0) {
+      // No valid month → return empty 30-day bucket
+      return {
+        year,
+        month: -1,
+        monthName: '',
+        days: 30,
+        data: new Array(30).fill(0),
+      };
+    }
+
+    // ----- 2. Compute month window -----
+    const monthStart = new Date(Date.UTC(year, monthIdx, 1, 0, 0, 0));
+    const monthEnd = new Date(Date.UTC(year, monthIdx + 1, 0, 23, 59, 59));
+    const daysInMonth = new Date(Date.UTC(year, monthIdx + 1, 0)).getUTCDate();
+
+    // ----- 3. Fetch UNFILTERED rows (no month/year filter server-side) -----
+    // Strip month/year so fetchUnifiedRows doesn't try to filter by them.
+    // We'll do the exact filter below using a date range.
+    const fetchedRows = await fetchUnifiedRows({
+      ...q,
+      month: undefined,
+      year: undefined,
+      dateFrom: undefined,
+      dateTo: undefined,
+    });
+
+    // ----- 4. Bucket by day of month -----
+    const daily = new Array(daysInMonth).fill(0);
+    let matchedCount = 0;
+
+    for (const r of fetchedRows) {
+      if (!r.date) continue;
+      const d = new Date(r.date);
+      if (Number.isNaN(d.getTime())) continue;
+
+      // Use UTC for consistency (matches monthStart/monthEnd)
+      const y = d.getUTCFullYear();
+      const m = d.getUTCMonth();
+
+      if (y !== year) continue;
+      if (m !== monthIdx) continue;
+
+      const day = d.getUTCDate();          // 1..31
+      const idx = day - 1;
+      if (idx < 0 || idx >= daily.length) continue;
+
+      daily[idx] += 1;
+      matchedCount++;
+    }
+
+    // Debug log — remove after confirming it works
+    console.log(
+      `[unifiedDailyVolume] month=${monthIdx} (${MONTH_NAMES[monthIdx]}) year=${year}`,
+      `| fetchedRows=${fetchedRows.length} matched=${matchedCount}`,
+      `| window=${monthStart.toISOString()} → ${monthEnd.toISOString()}`
+    );
+
+    return {
+      year,
+      month: monthIdx,
+      monthName: MONTH_NAMES[monthIdx],
+      days: daysInMonth,
+      data: daily,
+    };
+  },
+  // ⭐ UPDATED — returns CRM users array
+  async unifiedStats(q = {}, viewer = null) {
     const rows = await fetchUnifiedRows(q);
 
     let active = 0;
@@ -675,7 +998,7 @@ const OnlineCrmService = {
     let notQuoted = 0;
     let overdue = 0;
 
-    const overdueThreshold = 15;   // days
+    const overdueThreshold = 15;
 
     for (const r of rows) {
       active += 1;
@@ -683,7 +1006,7 @@ const OnlineCrmService = {
       if (r.stage === 'Quoted') {
         quotedCount += 1;
         if (typeof r.value === 'number') {
-          if (String(r.currency).toUpperCase().includes('USD')) {
+          if (String(r.currency || 'BDT').toUpperCase().includes('USD')) {
             quotedUSD += r.value;
           } else {
             quotedBDT += r.value;
@@ -694,14 +1017,13 @@ const OnlineCrmService = {
       if (r.daysAging > overdueThreshold && r.stage !== 'Quoted') overdue += 1;
     }
 
-    // CRM Manager = most-frequent assigned
-    const assigneeMap = {};
-    rows.forEach((r) => {
-      if (!r.assigned || r.assigned === 'Unassigned') return;
-      assigneeMap[r.assigned] = (assigneeMap[r.assigned] || 0) + 1;
-    });
+    // ⭐ Fetch all CRM-division users
+    const crmUsers = await fetchCrmUsers();
+
+    // Backward-compatible single name
     const crmManager =
-      Object.entries(assigneeMap).sort((a, b) => b[1] - a[1])[0]?.[0] ||
+      crmUsers[0]?.name ||
+      (viewer?.fullName || viewer?.name || viewer?.email || '').trim() ||
       'Unassigned';
 
     return {
@@ -712,11 +1034,12 @@ const OnlineCrmService = {
       notQuoted,
       overdue,
       crmManager,
+      crmUsers,
+      crmUsersCount: crmUsers.length,
       total: rows.length,
     };
   },
 
-  // ---------- UNIFIED MONTHLY VOLUME ----------
   async unifiedMonthlyVolume(q = {}) {
     const rows = await fetchUnifiedRows({ ...q, month: undefined });
     const year = q.year ? Number(q.year) : new Date().getFullYear();
@@ -732,30 +1055,44 @@ const OnlineCrmService = {
     return { year, months: MONTHS, data: monthly };
   },
 
-  // ---------- UNIFIED BY COUNTRY ----------
   async unifiedByCountry(q = {}) {
     const rows = await fetchUnifiedRows({ ...q, month: undefined });
+
+    // ⭐ Support grouping by 'country' (default) or 'source'
+    const by = (q.by || 'country').toLowerCase();
 
     const map = {};
     let total = 0;
     for (const r of rows) {
-      const key = r.country || 'Unknown';
+      let key;
+      if (by === 'source') {
+        // Group by origin (Email / Phone / Portal / etc.)
+        key = r.origin || 'Unknown';
+      } else if (by === 'assigned') {
+        key = r.assigned || 'Unassigned';
+      } else if (by === 'stage') {
+        key = r.stage || 'Unknown';
+      } else {
+        // Default: country
+        key = r.country || 'Unknown';
+      }
       map[key] = (map[key] || 0) + 1;
       total += 1;
     }
 
     const entries = Object.entries(map)
-      .map(([country, count]) => ({
-        country,
+      .map(([key, count]) => ({
+        // Keep `country` name for backward compat, plus `key`
+        country: key,
+        key,
         count,
         pct: total > 0 ? Math.round((count / total) * 100) : 0,
       }))
       .sort((a, b) => b.count - a.count);
 
-    return { total, entries };
+    return { total, by, entries };
   },
 
-  // ---------- UNIFIED TOP PRODUCTS + CLIENTS ----------
   async unifiedTopProducts(q = {}) {
     const rows = await fetchUnifiedRows({ ...q, month: undefined });
 

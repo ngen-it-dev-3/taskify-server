@@ -6,6 +6,7 @@ const {
   OnlineCrmController,
 } = require('../../controllers/onlineCrm/onlineCrm.controller');
 const { validateBody } = require('../../middleware/rfq/validate');
+const { authenticate } = require('../../middleware/auth.middleware');  // ⭐ ADD
 
 // ============================================================
 // VALIDATION SCHEMAS
@@ -26,10 +27,17 @@ const bulkDeleteSchema = {
 };
 
 // ============================================================
-// ⭐ UNIFIED ROUTES (first — no :id conflicts)
+// UNIFIED ROUTES
 // ============================================================
 router.get('/unified', OnlineCrmController.unifiedList);
-router.get('/unified/stats', OnlineCrmController.unifiedStats);
+
+// ⭐ Added `authenticate` so req.user is populated
+router.get(
+  '/unified/stats',
+  authenticate,
+  OnlineCrmController.unifiedStats
+);
+
 router.get('/unified/monthly-volume', OnlineCrmController.unifiedMonthly);
 router.get('/unified/by-country', OnlineCrmController.unifiedByCountry);
 router.get('/unified/top-products', OnlineCrmController.unifiedTop);
@@ -66,5 +74,6 @@ router.patch(
   OnlineCrmController.updateQuery
 );
 router.delete('/queries/:id', OnlineCrmController.removeQuery);
+router.get('/unified/daily-volume', OnlineCrmController.unifiedDaily);
 
 module.exports = router;

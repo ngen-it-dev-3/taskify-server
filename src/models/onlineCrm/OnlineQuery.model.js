@@ -8,6 +8,18 @@ const STAGES = ['To Start', 'Not Quoted', 'Quoted'];
 const SOURCES = ['Email', 'Phone', 'Portal', 'Tender Portal', 'Site Visit'];
 const STATUSES = ['Pending', 'Quoted', 'Won', 'Lost'];
 
+// ⭐ NEW enums
+const CURRENCIES = ['BDT', 'USD', 'SAR', 'AED', 'INR', 'EUR', 'GBP'];
+const MODES = ['Online (eGP)', 'Offline', 'Email'];
+const PARTICIPATE = ['Yes', 'No', 'Undecided'];
+const DOC_STATUS = [
+  'Docs pending',
+  'Docs in progress',
+  'Complete',
+  'Banking docs pending',
+  '',
+];
+
 // ============================================================
 // SCHEMA
 // ============================================================
@@ -24,6 +36,13 @@ const OnlineQuerySchema = new mongoose.Schema(
     date: {
       type: Date,
       default: Date.now,
+      index: true,
+    },
+
+    // ---- DRAFT FLAG (⭐ NEW) ----
+    draft: {
+      type: Boolean,
+      default: false,
       index: true,
     },
 
@@ -52,12 +71,34 @@ const OnlineQuerySchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    description: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    // ---- Reference (⭐ NEW) ----
+    referenceLink: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    recordedBy: {
+      type: String,
+      default: '',
+      trim: true,
+    },
 
     // ---- Assignment ----
     assigned: {
       type: String,
       default: 'Unassigned',
       index: true,
+    },
+    responsiblePerson: {
+      type: String,
+      default: '',
+      trim: true,
     },
 
     // ---- Sourcing ----
@@ -74,6 +115,17 @@ const OnlineQuerySchema = new mongoose.Schema(
       default: null,
       min: 0,
     },
+    // ⭐ NEW — final negotiated value
+    bidValue: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    currency: {
+      type: String,
+      enum: CURRENCIES,
+      default: 'BDT',
+    },
 
     // ---- Pipeline ----
     stage: {
@@ -89,14 +141,76 @@ const OnlineQuerySchema = new mongoose.Schema(
       index: true,
     },
 
-    // ---- Notes ----
+    // ---- Dates (⭐ NEW) ----
+    lastDateOfPurchase: {
+      type: Date,
+      default: null,
+    },
+    lastDateOfSubmission: {
+      type: Date,
+      default: null,
+    },
+    submittedAt: {
+      type: Date,
+      default: null,
+    },
+
+    // ---- Submission (⭐ NEW) ----
+    mode: {
+      type: String,
+      enum: MODES,
+      default: 'Online (eGP)',
+    },
+    participate: {
+      type: String,
+      enum: PARTICIPATE,
+      default: 'Yes',
+    },
+    docStatus: {
+      type: String,
+      enum: DOC_STATUS,
+      default: '',
+    },
+
+    // ---- Security (⭐ NEW) ----
+    securityAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    securityValidity: {
+      type: Date,
+      default: null,
+    },
+    performanceSecurityValidity: {
+      type: Date,
+      default: null,
+    },
+
+    // ---- Client contact (⭐ NEW) ----
+    contactName: { type: String, default: '', trim: true },
+    contactPhone: { type: String, default: '', trim: true },
+    contactEmail: { type: String, default: '', trim: true },
+    contactAddress: { type: String, default: '', trim: true },
+
+    // ---- Notes / eligibility (⭐ NEW) ----
     comments: {
       type: String,
       default: '',
       trim: true,
     },
+    note: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    eligibility: {
+      type: String,
+      default: '',
+      trim: true,
+    },
 
-    // ---- Optional link back to RFQ if this came from one ----
+    // ---- Optional link back to RFQ ----
     rfqId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'RFQ',
@@ -130,6 +244,8 @@ OnlineQuerySchema.index({ stage: 1, date: -1 });
 OnlineQuerySchema.index({ country: 1, stage: 1 });
 OnlineQuerySchema.index({ assigned: 1, stage: 1 });
 OnlineQuerySchema.index({ source: 1, date: -1 });
+OnlineQuerySchema.index({ draft: 1, updatedAt: -1 });
+OnlineQuerySchema.index({ company: 'text', product: 'text', description: 'text' });
 
 // ============================================================
 // VIRTUALS
@@ -146,8 +262,10 @@ OnlineQuerySchema.virtual('daysAging').get(function () {
 OnlineQuerySchema.statics.STAGES = STAGES;
 OnlineQuerySchema.statics.SOURCES = SOURCES;
 OnlineQuerySchema.statics.STATUSES = STATUSES;
+OnlineQuerySchema.statics.CURRENCIES = CURRENCIES;
 
 module.exports = mongoose.model('OnlineQuery', OnlineQuerySchema);
 module.exports.STAGES = STAGES;
 module.exports.SOURCES = SOURCES;
 module.exports.STATUSES = STATUSES;
+module.exports.CURRENCIES = CURRENCIES;
