@@ -226,7 +226,7 @@ const SalesOrderService = {
         clientDoc = await Client.create({
           name: company,
           nameKey,
-          tier: 'Standard',
+          tier: '',
           sector: '',
           country: country || 'Bangladesh',
           autoAdded: true,
@@ -375,7 +375,7 @@ const SalesOrderService = {
       'salesValue', 'salesman', 'crmManager', 'principal',
       'procurementStatus', 'procurementRecipients', 'logisticsMode',
       'customs', 'logisticsChecklist', 'clientPayment', 'principalPayment',
-      'notes', 'orderType',
+      'notes', 'orderType','expectedDeliveryDate',
     ];
 
     for (const k of patchable) {

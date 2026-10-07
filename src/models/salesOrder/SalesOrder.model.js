@@ -151,6 +151,7 @@ const SalesOrderSchema = new mongoose.Schema(
     deliveredAt: { type: Date, default: null },
     invoicedAt: { type: Date, default: null },
     paidAt: { type: Date, default: null },
+    expectedDeliveryDate: { type: Date, default: null },   // ⭐ ADD
 
     // ---- Notes / audit ----
     notes: { type: String, default: '' },

@@ -78,7 +78,7 @@ function fmtClient(doc) {
 
         visitsPerMonth: d.visitsPerMonth,
         lastVisitAt: d.lastVisitAt,
-        visitLog: (d.visitLog || []).slice(-10),      // last 10 visits
+        visitLog: (d.visitLog || []).slice(-10),
 
         nextAction: d.nextAction,
         projectIds: (d.projectIds || []).map((x) => x.toString()),
@@ -110,6 +110,76 @@ function fmtClient(doc) {
         notes: d.notes,
         tags: d.tags || [],
 
+        isActive: d.isActive,
+        createdAt: d.createdAt,
+        updatedAt: d.updatedAt,
+    };
+}
+
+/**
+ * ⭐ Lean formatter — used by listClients for smaller payloads.
+ *    Omits heavy fields (full visitLog, communicationLog, quotes, contracts)
+ *    that the All Clients table doesn't render.
+ */
+function fmtClientLean(doc) {
+    const d = doc.toObject ? doc.toObject() : doc;
+
+    return {
+        id: d._id.toString(),
+        name: d.name,
+        tier: d.tier,
+        isPartner: d.isPartner,
+        sector: d.sector,
+        location: d.location,
+        city: d.city,
+        area: d.area,
+        country: d.country,
+
+        stage: d.stage,
+        assignedRep: d.assignedRep?.toString() || null,
+        team: d.team,
+
+        lifetimeValue: d.lifetimeValue,
+        lastOrderAt: d.lastOrderAt,
+
+        autoAdded: d.autoAdded,
+        autoAddedFrom: d.autoAddedFrom,
+
+        // ⭐ Contacts are needed for the expanded sub-table
+        contacts: (d.contacts || []).map((c) => ({
+            _id: c._id?.toString(),
+            name: c.name,
+            designation: c.designation,
+            department: c.department,
+            email: c.email,
+            personalEmail: c.personalEmail,
+            phone: c.phone,
+            personalPhone: c.personalPhone,
+            notes: c.notes,
+            isDecisionMaker: !!c.isDecisionMaker,
+            autoAdded: !!c.autoAdded,
+            linkedIn: c.linkedIn,
+        })),
+
+        // ⭐ Minimal stubs for arrays so lengths still work if needed
+        quotes: [],
+        contracts: [],
+        communicationLog: [],
+        visitLog: [],
+        projectIds: [],
+        contactIds: [],
+
+        sourceRefs: {
+            tenderId: d.sourceRefs?.tenderId?.toString() || null,
+            rfqId: d.sourceRefs?.rfqId?.toString() || null,
+            quotationIds: [],
+            onlineQueryIds: [],
+            forecastEntryIds: [],
+            dmarActivityIds: [],
+        },
+
+        notes: '',
+        tags: d.tags || [],
         isActive: d.isActive,
         createdAt: d.createdAt,
         updatedAt: d.updatedAt,
@@ -152,12 +222,6 @@ function buildFilter(q = {}) {
 // DEDUP + AUTO-CAPTURE ENGINE
 // ============================================================
 
-/**
- * Find an existing Client 360 by any of:
- *   - nameKey exact match
- *   - any contact email matches
- *   - any contact phone matches
- */
 async function findExistingClient({ name, email, phone }) {
     const ors = [];
 
@@ -180,10 +244,6 @@ async function findExistingClient({ name, email, phone }) {
     return Client.findOne({ $or: ors }).lean();
 }
 
-/**
- * Create or link a Client 360 from any source.
- * Returns the Client document (existing or new).
- */
 async function upsertClientFromSource({
     name,
     country,
@@ -194,8 +254,8 @@ async function upsertClientFromSource({
     team,
     contacts = [],
     source,
-    sourceRefKey,   // e.g. 'tenderId' | 'rfqId' | 'quotationIds' | ...
-    sourceRefValue, // ObjectId or string
+    sourceRefKey,
+    sourceRefValue,
     value = 0,
     notes = '',
     quote = null,
@@ -205,7 +265,6 @@ async function upsertClientFromSource({
 
     const cleanName = String(name).trim();
 
-    // ---- Try to find existing ----
     const primaryContact = contacts[0] || {};
     const existing = await findExistingClient({
         name: cleanName,
@@ -213,11 +272,9 @@ async function upsertClientFromSource({
         phone: primaryContact.phone,
     });
 
-    // ---- If found, link the source ref and update any empty fields ----
     if (existing) {
         const update = { $addToSet: {} };
 
-        // ⭐ Track the source ref (arrays use $addToSet, single use $set)
         if (sourceRefKey === 'quotationIds' ||
             sourceRefKey === 'onlineQueryIds' ||
             sourceRefKey === 'forecastEntryIds' ||
@@ -228,16 +285,14 @@ async function upsertClientFromSource({
             update.$set[`sourceRefs.${sourceRefKey}`] = sourceRefValue;
         }
 
-        // Fill in empty fields
         update.$set = update.$set || {};
         if (country && !existing.country) update.$set.country = country;
         if (sector && !existing.sector) update.$set.sector = sector;
         if (city && !existing.city) update.$set.city = city;
         if (area && !existing.area) update.$set.area = area;
-        if (tier && (!existing.tier || existing.tier === 'Standard')) update.$set.tier = tier;
+        if (tier && (!existing.tier || existing.tier === '')) update.$set.tier = tier;
         if (team && !existing.team) update.$set.team = team;
 
-        // Add quote if provided
         if (quote) {
             update.$push = { quotes: quote };
         }
@@ -248,11 +303,10 @@ async function upsertClientFromSource({
         return await Client.findById(existing._id);
     }
 
-    // ---- Otherwise create a new client ----
     const newClient = new Client({
         name: cleanName,
         nameKey: normalizeKey(cleanName),
-        tier: tier || 'Standard',
+        tier: tier || '',
         sector: sector || '',
         country: country || 'Bangladesh',
         city: city || '',
@@ -278,26 +332,44 @@ async function upsertClientFromSource({
 // ============================================================
 const Client360Service = {
     // ============================================================
-    // LIST
+    // LIST — ⭐ OPTIMIZED
+    //   - No .populate() → 1 query instead of N
+    //   - .select() with only needed fields
+    //   - lean formatter for small payloads
     // ============================================================
     async listClients(q = {}) {
         const page = Math.max(1, Number(q.page) || 1);
-        const limit = Math.min(Number(q.limit) || 50, 500);
+        const limit = Math.min(Number(q.limit) || 50, 1000);
         const skip = (page - 1) * limit;
 
         const filter = buildFilter(q);
 
+        // ⭐ Only fetch the fields the "All Clients" table renders
+        const projection = [
+            'name', 'tier', 'isPartner', 'sector', 'country', 'city', 'area',
+            'location', 'stage', 'team', 'assignedRep',
+            'lifetimeValue', 'lastOrderAt',
+            'autoAdded', 'autoAddedFrom',
+            'contacts._id', 'contacts.name', 'contacts.designation',
+            'contacts.department', 'contacts.email', 'contacts.personalEmail',
+            'contacts.phone', 'contacts.personalPhone', 'contacts.notes',
+            'contacts.isDecisionMaker', 'contacts.autoAdded', 'contacts.linkedIn',
+            'sourceRefs.tenderId', 'sourceRefs.rfqId',
+            'tags', 'isActive', 'createdAt', 'updatedAt',
+        ].join(' ');
+
         const [items, total] = await Promise.all([
             Client.find(filter)
-                .populate('assignedRep', 'fullName name email profilePhoto')
-                .sort({ updatedAt: -1, createdAt: -1 })
+                .select(projection)
+                .sort({ updatedAt: -1 })
                 .skip(skip)
-                .limit(limit),
+                .limit(limit)
+                .lean(),
             Client.countDocuments(filter),
         ]);
 
         return {
-            items: items.map(fmtClient),
+            items: items.map(fmtClientLean),
             total,
             page,
             limit,
@@ -306,7 +378,7 @@ const Client360Service = {
     },
 
     // ============================================================
-    // GET BY ID
+    // GET BY ID — keeps populate for profile page
     // ============================================================
     async getById(id) {
         const doc = await Client.findById(id)
@@ -316,56 +388,92 @@ const Client360Service = {
     },
 
     // ============================================================
-    // STATS — for the "All Clients" view KPI row
+    // STATS — ⭐ OPTIMIZED (single aggregation instead of .find())
     // ============================================================
     async getStats(q = {}) {
-        const filter = buildFilter({ ...q, search: undefined, page: undefined, limit: undefined });
+        const filter = buildFilter({
+            ...q,
+            search: undefined,
+            page: undefined,
+            limit: undefined,
+        });
 
-        const [totalClients, partners] = await Promise.all([
-            Client.countDocuments(filter),
-            Client.countDocuments({ ...filter, isPartner: true }),
+        // ⭐ Run 3 aggregations + 1 count in parallel — all server-side
+        const [result] = await Client.aggregate([
+            { $match: filter },
+            {
+                $facet: {
+                    // ---- Totals ----
+                    totals: [
+                        {
+                            $group: {
+                                _id: null,
+                                totalClients: { $sum: 1 },
+                                totalPartners: {
+                                    $sum: { $cond: ['$isPartner', 1, 0] },
+                                },
+                                totalContacts: {
+                                    $sum: { $size: { $ifNull: ['$contacts', []] } },
+                                },
+                                potential: {
+                                    $sum: {
+                                        $cond: [
+                                            { $in: ['$stage', ['hot', 'warm']] },
+                                            1,
+                                            0,
+                                        ],
+                                    },
+                                },
+                            },
+                        },
+                    ],
+                    // ---- Communication kinds ----
+                    comm: [
+                        { $unwind: { path: '$communicationLog', preserveNullAndEmptyArrays: false } },
+                        {
+                            $group: {
+                                _id: '$communicationLog.kind',
+                                count: { $sum: 1 },
+                            },
+                        },
+                    ],
+                },
+            },
         ]);
 
-        const all = await Client.find(filter).lean();
+        const t = (result?.totals && result.totals[0]) || {
+            totalClients: 0,
+            totalPartners: 0,
+            totalContacts: 0,
+            potential: 0,
+        };
 
-        let totalContacts = 0;
         let called = 0;
         let emailed = 0;
         let presented = 0;
-        let potential = 0;
-
-        for (const c of all) {
-            totalContacts += (c.contacts || []).length;
-
-            // Count communication types
-            const log = c.communicationLog || [];
-            for (const entry of log) {
-                if (entry.kind === 'call') called++;
-                else if (entry.kind === 'email') emailed++;
-                else if (entry.kind === 'meeting' || entry.kind === 'site-visit') presented++;
-            }
-
-            // "Potential" = stage hot or warm
-            if (c.stage === 'hot' || c.stage === 'warm') potential++;
+        for (const row of result?.comm || []) {
+            if (row._id === 'call') called = row.count;
+            else if (row._id === 'email') emailed = row.count;
+            else if (row._id === 'meeting' || row._id === 'site-visit')
+                presented += row.count;
         }
 
         return {
-            totalClients,
-            totalPartners: partners,
-            totalContacts,
+            totalClients: t.totalClients || 0,
+            totalPartners: t.totalPartners || 0,
+            totalContacts: t.totalContacts || 0,
             called,
             emailed,
             presented,
-            potential,
+            potential: t.potential || 0,
         };
     },
 
     // ============================================================
-    // SECTOR BREAKDOWN — for sector tabs
+    // SECTOR BREAKDOWN — already aggregation-based ✅
     // ============================================================
     async getSectorBreakdown(q = {}) {
         const filter = buildFilter({ ...q, search: undefined });
-        // Remove sector filter (we're computing the breakdown)
         delete filter.sector;
 
         const rows = await Client.aggregate([
@@ -375,14 +483,14 @@ const Client360Service = {
         ]);
 
         const entries = rows
-            .filter((r) => r._id && r._id.trim())
+            .filter((r) => r._id && String(r._id).trim())
             .map((r) => ({ sector: r._id, count: r.count }));
 
         return { total: entries.reduce((s, e) => s + e.count, 0), entries };
     },
 
     // ============================================================
-    // CREATE (manual)
+    // CREATE
     // ============================================================
     async createManual(dto, userId) {
         if (!dto.name || !String(dto.name).trim()) {
@@ -395,7 +503,7 @@ const Client360Service = {
             sector: dto.sector || '',
             city: dto.city || '',
             area: dto.area || '',
-            tier: dto.tier || 'Standard',
+            tier: dto.tier || '',
             team: dto.team || '',
             contacts: dto.contacts || [],
             source: 'manual',
@@ -447,7 +555,7 @@ const Client360Service = {
     },
 
     // ============================================================
-    // CONTACTS — add / update / delete
+    // CONTACTS
     // ============================================================
     async addContact(clientId, contact, userId) {
         const doc = await Client.findById(clientId);
@@ -506,7 +614,7 @@ const Client360Service = {
     },
 
     // ============================================================
-    // COMMUNICATION LOG
+    // COMMUNICATION
     // ============================================================
     async addCommunication(clientId, entry, userId) {
         const doc = await Client.findById(clientId);
@@ -527,15 +635,14 @@ const Client360Service = {
     },
 
     // ============================================================
-    // AUTO-CAPTURE — called from other services
+    // AUTO-CAPTURE
     // ============================================================
-
     async autoCaptureFromTender(tender, userId) {
         if (!tender) return null;
         return upsertClientFromSource({
             name: tender.tenderer,
             country: tender.country || 'Bangladesh',
-            sector: 'Government',   // tenders are usually gov
+            sector: 'Government',
             team: 'Sales',
             contacts: [],
             source: 'tender',
@@ -656,10 +763,8 @@ const Client360Service = {
         const client = await Client.findById(clientId).lean();
         if (!client) throw ApiError.notFound('Client not found');
 
-        // Import Quotation model
         const Quotation = require('../../models/Quotation.model');
 
-        // Find quotations matching this client by company name (case-insensitive)
         const re = new RegExp(
             `^${String(client.name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
             'i'
@@ -667,6 +772,7 @@ const Client360Service = {
 
         const quotations = await Quotation.find({ 'client.company': re })
             .sort({ createdAt: -1 })
+            .limit(100)
             .lean();
 
         return quotations.map((q) => ({
@@ -690,10 +796,6 @@ const Client360Service = {
         }));
     },
 
-
-    // ============================================================
-    // CONSTANTS
-    // ============================================================
     getConstants() {
         return {
             TIERS,
@@ -707,6 +809,7 @@ const Client360Service = {
 module.exports = {
     Client360Service,
     fmtClient,
+    fmtClientLean,
     upsertClientFromSource,
     buildFilter,
 };

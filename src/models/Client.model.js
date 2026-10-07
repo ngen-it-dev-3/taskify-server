@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 // ============================================================
 // ENUMS
 // ============================================================
-const TIERS = ['Gold', 'Silver', 'Bronze', 'Standard'];
+const TIERS = ['Gold', 'Silver', 'Bronze'];
 const SECTORS = [
   'Power & Energy',
   'Financial / Banking',
@@ -51,8 +51,8 @@ const ContactSchema = new mongoose.Schema(
     department: { type: String, default: '' },
     email: { type: String, default: '', lowercase: true, trim: true },
     personalEmail: { type: String, default: '', lowercase: true, trim: true },
-    phone: { type: String, default: '' },          // office
-    personalPhone: { type: String, default: '' },  // mobile
+    phone: { type: String, default: '' },
+    personalPhone: { type: String, default: '' },
     notes: { type: String, default: '' },
     isDecisionMaker: { type: Boolean, default: false },
     autoAdded: { type: Boolean, default: false },
@@ -64,10 +64,10 @@ const ContactSchema = new mongoose.Schema(
 const QuoteSchema = new mongoose.Schema(
   {
     quotationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Quotation' },
-    qtnNumber: { type: String, default: '' },      // "QTN-2026-2953"
+    qtnNumber: { type: String, default: '' },
     item: { type: String, default: '' },
     value: { type: Number, default: 0 },
-    status: { type: String, default: 'Draft' },    // Draft | Sent | Quoted | Won | Lost
+    status: { type: String, default: 'Draft' },
     date: { type: Date, default: null },
   },
   { _id: true }
@@ -81,7 +81,7 @@ const ContractSchema = new mongoose.Schema(
     startDate: { type: Date, default: null },
     endDate: { type: Date, default: null },
     renewalDue: { type: Date, default: null },
-    status: { type: String, default: 'Active' },   // Active | Expired | Renewing
+    status: { type: String, default: 'Active' },
   },
   { _id: true }
 );
@@ -97,7 +97,7 @@ const CommLogSchema = new mongoose.Schema(
     body: { type: String, default: '' },
     at: { type: Date, default: Date.now },
     by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    linkedTo: { type: String, default: '' },       // e.g. quote id, contract id
+    linkedTo: { type: String, default: '' },
   },
   { _id: true }
 );
@@ -115,7 +115,6 @@ const ClientSchema = new mongoose.Schema(
       index: true,
     },
     nameKey: {
-      // ⭐ lowercase, trimmed — used for dedup matching
       type: String,
       default: '',
       index: true,
@@ -123,10 +122,10 @@ const ClientSchema = new mongoose.Schema(
     tier: {
       type: String,
       enum: TIERS,
-      default: 'Standard',
+      default: '',
       index: true,
     },
-    isPartner: { type: Boolean, default: false },   // reseller
+    isPartner: { type: Boolean, default: false },
     sector: {
       type: String,
       default: '',
@@ -149,7 +148,7 @@ const ClientSchema = new mongoose.Schema(
       ref: 'User',
       index: true,
     },
-    team: { type: String, default: '' },            // Marketing | Sales
+    team: { type: String, default: '' },
 
     // ---------- Financial roll-up ----------
     lifetimeValue: { type: Number, default: 0 },
@@ -166,7 +165,6 @@ const ClientSchema = new mongoose.Schema(
       index: true,
     },
     sourceRefs: {
-      // ⭐ track where this client came from for dedup
       tenderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tender', default: null },
       rfqId: { type: mongoose.Schema.Types.ObjectId, ref: 'RFQ', default: null },
       quotationIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Quotation' }],
@@ -217,21 +215,45 @@ const ClientSchema = new mongoose.Schema(
 // ============================================================
 // INDEXES
 // ============================================================
+
+// ---- Text search ----
 ClientSchema.index({ name: 'text', sector: 'text', location: 'text' });
+
+// ---- Dedup ----
 ClientSchema.index({ nameKey: 1 }, { unique: false });
+
+// ---- Auto-capture grouping ----
 ClientSchema.index({ autoAdded: 1, autoAddedFrom: 1 });
+
+// ---- Existing compound filters ----
 ClientSchema.index({ tier: 1, country: 1 });
 ClientSchema.index({ country: 1, sector: 1 });
 
+// ⭐ NEW — Primary list query (sort by updatedAt)
+ClientSchema.index({ isActive: 1, updatedAt: -1 });
+ClientSchema.index({ updatedAt: -1 });
+
+// ⭐ NEW — Filtered lists
+ClientSchema.index({ isActive: 1, isPartner: 1, updatedAt: -1 });
+ClientSchema.index({ isActive: 1, sector: 1, updatedAt: -1 });
+ClientSchema.index({ isActive: 1, country: 1, updatedAt: -1 });
+ClientSchema.index({ isActive: 1, tier: 1, updatedAt: -1 });
+ClientSchema.index({ isActive: 1, stage: 1, updatedAt: -1 });
+
+// ⭐ NEW — Contact search
+ClientSchema.index({ 'contacts.email': 1 });
+ClientSchema.index({ 'contacts.personalEmail': 1 });
+ClientSchema.index({ 'contacts.phone': 1 });
+ClientSchema.index({ 'contacts.personalPhone': 1 });
+
 // ============================================================
-// PRE-SAVE — auto-generate nameKey + set lastOrderAt from quotes
+// PRE-SAVE
 // ============================================================
 ClientSchema.pre('save', function (next) {
   if (this.isModified('name')) {
     this.nameKey = String(this.name || '').trim().toLowerCase();
   }
 
-  // Compute lifetimeValue + lastOrderAt from quotes (if quotes present)
   if (this.quotes && this.quotes.length > 0) {
     let total = 0;
     let wonCount = 0;
