@@ -207,6 +207,7 @@ const onlineCrmRoutes = require('./src/routes/onlineCrm/onlineCrm.routes');
 const dmarRoutes = require('./src/routes/dmr/dmar.routes');
 const client360Routes = require('./src/routes/client360/client360.routes');
 const salesOrderRoutes = require('./src/routes/salesOrder/salesOrder.routes');
+const numberingSettings = require('./src/routes/onlineCrm/numberingSettings.routes');
 
 
 app.use("/api/v1/auth", authRoutes);
@@ -249,6 +250,7 @@ app.use('/api/v1/online-crm', onlineCrmRoutes);
 app.use('/api/v1/dmar', dmarRoutes);
 app.use('/api/v1/clients', client360Routes);
 app.use('/api/v1/sales-orders', salesOrderRoutes);
+app.use('/api/v1/numbering-settings', numberingSettings);
 
 
 

@@ -82,6 +82,7 @@ function toClientShape(doc) {
     return {
         id: d._id.toString(),
         pqNumber: d.pqNumber,
+        quotationNumber: d.quotationNumber || '',        // ⭐ NEW
         status: d.status,
         stage: d.stage,
         rfqId: d.rfqId?.toString() || '',
@@ -96,6 +97,17 @@ function toClientShape(doc) {
         vatEnabled: d.vatEnabled,
         discountEnabled: d.discountEnabled,
         pqrNumber: d.pqrNumber,
+
+        // ⭐ NEW — editable Preview fields
+        billToCompany: d.billToCompany || '',
+        billToContactName: d.billToContactName || '',
+        billToContactRole: d.billToContactRole || '',
+        billToEmail: d.billToEmail || '',
+        billToPhone: d.billToPhone || '',
+        billToAddress: d.billToAddress || '',
+        pqDate: d.pqDate || '',
+        rfqRefOverride: d.rfqRefOverride || '',
+
         lines: d.lines || [],
         rates: d.rates || {},
         logistics: d.logistics || {},
@@ -187,6 +199,7 @@ const QuotationService = {
 
         const doc = new Quotation({
             pqNumber,
+            quotationNumber: dto.quotationNumber || '',   // ⭐ NEW
             status: 'draft',
             stage: dto.stage || 'Negotiation',
             rfqId: rfq._id,
@@ -211,6 +224,16 @@ const QuotationService = {
             vatEnabled: dto.vatEnabled ?? true,
             discountEnabled: dto.discountEnabled ?? true,
             pqrNumber: dto.pqrNumber || 'ME0-P021(T10)-W(L1)',
+            // ⭐ NEW — editable Preview fields
+            billToCompany: dto.billToCompany || '',
+            billToContactName: dto.billToContactName || '',
+            billToContactRole: dto.billToContactRole || '',
+            billToEmail: dto.billToEmail || '',
+            billToPhone: dto.billToPhone || '',
+            billToAddress: dto.billToAddress || '',
+            pqDate: dto.pqDate || '',
+            rfqRefOverride: dto.rfqRefOverride || '',
+
             lines: dto.lines || [],
             rates: dto.rates || {},
             logistics: dto.logistics || {},
@@ -297,6 +320,18 @@ const QuotationService = {
         if (dto.vatEnabled !== undefined) doc.vatEnabled = dto.vatEnabled;
         if (dto.discountEnabled !== undefined) doc.discountEnabled = dto.discountEnabled;
         if (dto.pqrNumber) doc.pqrNumber = dto.pqrNumber;
+
+        // ⭐ NEW — editable Preview fields
+        if (dto.pqNumber) doc.pqNumber = dto.pqNumber;
+        if (dto.quotationNumber !== undefined) doc.quotationNumber = dto.quotationNumber;
+        if (dto.billToCompany !== undefined) doc.billToCompany = dto.billToCompany;
+        if (dto.billToContactName !== undefined) doc.billToContactName = dto.billToContactName;
+        if (dto.billToContactRole !== undefined) doc.billToContactRole = dto.billToContactRole;
+        if (dto.billToEmail !== undefined) doc.billToEmail = dto.billToEmail;
+        if (dto.billToPhone !== undefined) doc.billToPhone = dto.billToPhone;
+        if (dto.billToAddress !== undefined) doc.billToAddress = dto.billToAddress;
+        if (dto.pqDate !== undefined) doc.pqDate = dto.pqDate;
+        if (dto.rfqRefOverride !== undefined) doc.rfqRefOverride = dto.rfqRefOverride;
 
         if (dto.lines) {
             doc.lines = dto.lines;

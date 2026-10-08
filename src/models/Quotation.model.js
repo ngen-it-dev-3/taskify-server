@@ -76,6 +76,7 @@ const QuotationSchema = new mongoose.Schema(
   {
     // ---- Core identification ----
     pqNumber: { type: String, required: true, unique: true, index: true },
+    quotationNumber: { type: String, default: '' }, 
     status: {
       type: String,
       enum: ['draft', 'awaiting_approval', 'sent', 'won', 'lost', 'expired'],
@@ -107,6 +108,16 @@ const QuotationSchema = new mongoose.Schema(
     discountEnabled: { type: Boolean, default: true },
     pqrNumber: { type: String, default: '' },
 
+    // ⭐ NEW — editable Bill To / Quote Details fields
+    billToCompany:     { type: String, default: '' },
+    billToContactName: { type: String, default: '' },
+    billToContactRole: { type: String, default: '' },
+    billToEmail:       { type: String, default: '' },
+    billToPhone:       { type: String, default: '' },
+    billToAddress:     { type: String, default: '' },
+    pqDate:            { type: String, default: '' },
+    rfqRefOverride:    { type: String, default: '' },
+    
     // ---- Content ----
     lines: { type: [LineItemSchema], default: [] },
     rates: { type: RatesSchema, default: () => ({}) },
