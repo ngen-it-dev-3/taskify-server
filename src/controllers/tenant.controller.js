@@ -120,6 +120,7 @@ exports.createTrialTenant = async (req, res) => {
                 isActive: true,
                 isEmailVerified: false,
                 mustChangePassword: true, // force change on first login
+                trialStartsAt,
                 trialEndsAt,
             });
 
@@ -158,6 +159,7 @@ exports.createTrialTenant = async (req, res) => {
                     name: tenant.name,
                     slug: tenant.slug,
                     users: tenant.users,
+                    trialStartsAt: tenant.trialStartsAt,
                     trialEndsAt: tenant.trialEndsAt,
                 },
                 users: createdUsers.map((u) => ({
