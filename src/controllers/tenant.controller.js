@@ -32,6 +32,7 @@ async function uniqueSlug(base) {
 function signToken(user) {
     return jwt.sign(
         {
+            userId: user._id,
             id: user._id,
             email: user.email,
             role: user.role,

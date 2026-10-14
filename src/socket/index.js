@@ -514,10 +514,24 @@ const initializeSocket = (server) => {
       }
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.userId).select("-password");
 
-      if (!user || !user.isActive) {
-        console.warn(`❌ Socket rejected: User ${decoded.userId} inactive`);
+      // ✅ FIX: support both "userId" (login) and "id" (signup)
+      const userId = decoded.userId || decoded.id;
+
+      if (!userId) {
+        console.warn("❌ Socket rejected: token missing user id");
+        return next(new Error("Authentication error: Invalid token payload"));
+      }
+
+      const user = await User.findById(userId).select("-password");
+
+      if (!user) {
+        console.warn(`❌ Socket rejected: user ${userId} not found`);
+        return next(new Error("Authentication error: User not found"));
+      }
+
+      if (!user.isActive) {
+        console.warn(`❌ Socket rejected: user ${user._id} inactive`);
         return next(new Error("Authentication error: User inactive"));
       }
 
