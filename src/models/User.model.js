@@ -381,6 +381,7 @@ const userSchema = new mongoose.Schema(
 
     tenantId: { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", default: null },
     mustChangePassword: { type: Boolean, default: false },
+    trialStartsAt: { type: Date, default: null },   // ✅ ADD THIS
     trialEndsAt: { type: Date, default: null },
 
 
