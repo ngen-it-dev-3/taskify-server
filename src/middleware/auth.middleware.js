@@ -12,7 +12,7 @@ const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+
     // IMPORTANT: Populate the roles field
     const user = await User.findById(decoded.userId)
       .select("-password")
@@ -68,7 +68,7 @@ const requireRole = (...roles) => {
         legacy: req.user.role,
         populated: req.user.roles ? req.user.roles.map(r => r.code) : [],
       });
-      
+
       return res.status(403).json({
         success: false,
         message: `Access denied. Required roles: ${roles.join(", ")}`,
@@ -81,6 +81,7 @@ const requireRole = (...roles) => {
 
 const requireMinRole = (minRole) => {
   const roleHierarchy = {
+    tender_user: 1,
     employee: 1,
     line_manager: 2,
     project_manager: 3,

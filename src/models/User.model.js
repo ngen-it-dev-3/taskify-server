@@ -19,7 +19,7 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
       match: [
-        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+        /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/,
         "Please provide a valid email",
       ],
     },
@@ -41,7 +41,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      default: "employee",
+      default: "tender_user",
       enum: [
         "super_admin",
         "admin",
@@ -50,6 +50,7 @@ const userSchema = new mongoose.Schema(
         "project_manager",
         "line_manager",
         "employee",
+        "tender_user",
       ],
     },
     roles: [
@@ -377,6 +378,11 @@ const userSchema = new mongoose.Schema(
         default: "",
       },
     },
+
+    tenantId: { type: mongoose.Schema.Types.ObjectId, ref: "Tenant", default: null },
+    mustChangePassword: { type: Boolean, default: false },
+    trialEndsAt: { type: Date, default: null },
+
 
     // ============================================================
     // NOTIFICATIONS
