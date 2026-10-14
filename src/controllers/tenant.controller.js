@@ -163,9 +163,15 @@ exports.createTrialTenant = async (req, res) => {
                     trialEndsAt: tenant.trialEndsAt,
                 },
                 users: createdUsers.map((u) => ({
+                    _id: u._id,
                     id: u._id,
+                    fullName: u.fullName,
                     email: u.email,
                     role: u.role,
+                    tenantId: u.tenantId,
+                    isActive: u.isActive,
+                    trialStartsAt: u.trialStartsAt,   // ✅ ADD
+                    trialEndsAt: u.trialEndsAt,       // ✅ ADD
                 })),
                 token,
             },
