@@ -138,6 +138,7 @@ const listSubmissions = async (req, res) => {
         readiness: t.readiness ?? 0,
         priority: t.priority || "",
         tenderSecurityPurchased: t.tenderSecurityPurchased || false, // ✅ ADD THIS LINE
+        lastDateOfSubmission: t.lastDateOfSubmission,
         _docTaskCount: ttasks.length,
       };
     });
