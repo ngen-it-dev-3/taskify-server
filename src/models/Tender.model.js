@@ -3,22 +3,48 @@ const mongoose = require("mongoose");
 
 /* ============================================================
    SUB-SCHEMA — Eligibility Requirements
-   Each requirement the principal publishes, along with our
-   own record and the resulting match verdict.
    ============================================================ */
 const EligibilityRequirementSchema = new mongoose.Schema(
   {
-    id: { type: String, required: true },           // stable key (uuid/slug)
-    requirement: { type: String, required: true },   // "Experience — as advertised"
-    ourRecord: { type: String, default: "" },        // "7 years"
+    id: { type: String, required: true },
+    requirement: { type: String, required: true },
+    ourRecord: { type: String, default: "" },
     match: {
       type: String,
       enum: ["Meets", "Gap", "Partial", ""],
       default: "",
     },
-    note: { type: String, default: "" },             // optional per-row note
+    note: { type: String, default: "" },
   },
-  { _id: false },                                    // use `id` as the key
+  { _id: false },
+);
+
+/* ============================================================
+   SUB-SCHEMA — Todo items (per section, no file)
+   ============================================================ */
+const TodoSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },
+    title: { type: String, required: true, trim: true },
+    done: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
+/* ============================================================
+   SUB-SCHEMA — Submission Package Section
+   ============================================================ */
+const SectionSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },            // stable key (uuid)
+    key: { type: String, required: true },           // "company_eligibility" | "technical" | ...
+    title: { type: String, required: true },         // "Company & eligibility"
+    description: { type: String, default: "" },
+    portalHint: { type: String, default: "" },       // "Upload in the portal under ..."
+    order: { type: Number, default: 0 },
+    todoItems: { type: [TodoSchema], default: [] },
+  },
+  { _id: false },
 );
 
 /* ============================================================
@@ -141,12 +167,30 @@ const TenderSchema = new mongoose.Schema(
       },
     ],
 
+    /* ---------- SUBMISSION PACKAGE (NEW) ---------- */
+    packageMode: {
+      type: String,
+      enum: ["section_by_section", "single_package", "portal", "rfq", ""],
+      default: "",
+    },
+    packageLabel: { type: String, default: "" },
+    sections: { type: [SectionSchema], default: [] },
+    notes: { type: String, default: "" },
+
     /* ---------- LOSS INFO ---------- */
     lossReason: { type: String, default: "" },
     lowestCompliantBidder: { type: String, default: "" },
     lowestCompliantValue: { type: Number, default: 0 },
     lostAt: { type: Date, default: null },
 
+    /* ---------- status ---------- */
+    /* Add inside TenderSchema */
+    priority: {
+      type: String,
+      enum: ["high", "medium", "low", ""],
+      default: "high",
+    },
+    tenderSecurityPurchased: { type: Boolean, default: false },
     /* ---------- RESPONSIBILITY ---------- */
     owner: {
       type: mongoose.Schema.Types.ObjectId,
@@ -174,25 +218,13 @@ const TenderSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-/* ============================================================
- * INDEXES — tuned for the actual queries this app runs
- * ============================================================ */
-
-// Primary list query: filter + sort by updatedAt
+/* ============================================================ */
 TenderSchema.index({ draft: 1, updatedAt: -1 });
 TenderSchema.index({ stage: 1, updatedAt: -1 });
 TenderSchema.index({ tenderType: 1, updatedAt: -1 });
-
-// Owner-scoped listings (dashboard / overview)
 TenderSchema.index({ owner: 1, updatedAt: -1 });
-
-// Stage + owner (used by some overview queries)
 TenderSchema.index({ stage: 1, owner: 1 });
-
-// Full-text search
 TenderSchema.index({ tenderer: "text", title: "text", description: "text" });
-
-// Deadline queries (overview / upcoming)
 TenderSchema.index({ lastDateOfSubmission: 1 });
 TenderSchema.index({ lastDateOfPurchase: 1 });
 

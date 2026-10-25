@@ -114,6 +114,18 @@ router.delete("/:id/doc-tasks/:taskId", tenderCtrl.deleteDocTask);
 
 router.patch("/:id/checklist", tenderCtrl.updateChecklist);
 
+/* ✅ NEW — Submission Preparation (package + sections + todos) */
+router.patch("/:id/preparation", tenderCtrl.updatePreparation);
+
+router.post("/:id/sections", tenderCtrl.createSection);
+router.patch("/:id/sections/:sectionId", tenderCtrl.updateSection);
+router.delete("/:id/sections/:sectionId", tenderCtrl.deleteSection);
+
+router.post("/:id/sections/:sectionId/todos", tenderCtrl.addTodo);
+router.patch("/:id/sections/:sectionId/todos/:todoId", tenderCtrl.updateTodo);
+router.delete("/:id/sections/:sectionId/todos/:todoId", tenderCtrl.deleteTodo);
+router.post("/:id/sections/apply-template", tenderCtrl.applySectionTemplate);
+
 /* ✅ Notify Finance for a tender */
 router.post("/:id/notify-finance", tenderCtrl.notifyFinance);
 

@@ -2,9 +2,10 @@
 const Tender = require("../../models/Tender.model");
 const TenderDocumentTask = require("../../models/TenderDocumentTask.model");
 
-/**
- * Compute a checklist per tender from the doc tasks + submission state.
- */
+/* ============================================================
+ * Helpers
+ * ============================================================ */
+
 function buildChecklist(tender, tasks) {
   const anyInProgress = tasks.some((t) => t.status === "In Progress");
   const anyPending = tasks.some((t) => t.status === "Pending");
@@ -30,12 +31,77 @@ function buildChecklist(tender, tasks) {
     {
       id: "c3",
       label: "Submitted before deadline",
-      value: tender.submitted
-        ? "Submitted"
-        : `${daysToDeadline} days remaining`,
+      value: tender.submitted ? "Submitted" : `${daysToDeadline} days remaining`,
       tone: tender.submitted ? "neutral" : "warn",
     },
   ];
+}
+
+/**
+ * Section ready/total counters, grouped by sectionId.
+ * Tasks with empty sectionId belong to the "Unsectioned" bucket.
+ */
+function computeSectionCounts(tasks) {
+  const map = {};
+  for (const t of tasks) {
+    const key = t.sectionId || "";
+    if (!map[key]) map[key] = { ready: 0, total: 0 };
+    map[key].total += 1;
+    if (t.status === "Done") map[key].ready += 1;
+  }
+  return map;
+}
+
+/**
+ * Recompute readiness = % of sections fully ready, then fallback to
+ * task-level completion if the tender has no sections.
+ */
+async function recomputeReadiness(tenderId) {
+  const [tender, tasks] = await Promise.all([
+    Tender.findById(tenderId).lean(),
+    TenderDocumentTask.find({ tenderId }).lean(),
+  ]);
+  if (!tender) return 0;
+
+  const sections = tender.sections || [];
+  let readiness = 0;
+
+  if (sections.length > 0) {
+    const counts = computeSectionCounts(tasks);
+    let totalSections = sections.length; // ✅ Count ALL sections
+    let readySections = 0;
+
+    for (const s of sections) {
+      const c = counts[s.id] || { ready: 0, total: 0 };
+
+      // A section is only "ready" if it actually has tasks AND all are Done.
+      if (c.total > 0 && c.ready === c.total) {
+        readySections += 1;
+      }
+    }
+
+    // ✅ Progress is now divided by ALL sections, not just ones with tasks.
+    readiness = Math.round((readySections / totalSections) * 100);
+  } else {
+    const total = tasks.length;
+    const done = tasks.filter((t) => t.status === "Done").length;
+    readiness = total ? Math.round((done / total) * 100) : 0;
+  }
+
+  // Update docStatus as a side effect
+  const anyInProgress = tasks.some((t) => t.status === "In Progress");
+  const anyPending = tasks.some((t) => t.status === "Pending");
+  const docStatus =
+    readiness === 100
+      ? "Complete"
+      : anyInProgress
+        ? "Docs in progress"
+        : anyPending
+          ? "Docs pending"
+          : tender.docStatus || "";
+
+  await Tender.findByIdAndUpdate(tenderId, { readiness, docStatus });
+  return readiness;
 }
 
 /* ============================================================
@@ -70,6 +136,8 @@ const listSubmissions = async (req, res) => {
         submitted: t.submitted ? "Submitted" : "Not yet",
         status: t.docStatus || "Docs pending",
         readiness: t.readiness ?? 0,
+        priority: t.priority || "",
+        tenderSecurityPurchased: t.tenderSecurityPurchased || false, // ✅ ADD THIS LINE
         _docTaskCount: ttasks.length,
       };
     });
@@ -81,9 +149,6 @@ const listSubmissions = async (req, res) => {
   }
 };
 
-/* ============================================================
- * DETAIL — one tender's submission detail
- * ============================================================ */
 /* ============================================================
  * DETAIL — one tender's submission detail
  * ============================================================ */
@@ -110,7 +175,6 @@ const getSubmissionDetail = async (req, res) => {
       )
       : 0;
 
-    /* ---------- Bid summary ---------- */
     const bidValue = Number(tender.bidValue) || 0;
     const tenderSecurity = Number(tender.tenderSecurityAmount) || 0;
     const performanceSecurity = Number(tender.performanceSecurityAmount) || 0;
@@ -118,7 +182,6 @@ const getSubmissionDetail = async (req, res) => {
       ? Math.round((performanceSecurity / bidValue) * 100)
       : 0;
 
-    /* ---------- Documents submitted (attachments) ---------- */
     const documentsSubmitted = (tender.attachments ?? []).map((a) => ({
       id: String(a._id),
       name: a.name,
@@ -127,12 +190,37 @@ const getSubmissionDetail = async (req, res) => {
       mimeType: a.mimeType ?? "",
     }));
 
-    /* ---------- Other participants (competitors) ---------- */
     const otherParticipants = (tender.otherParticipants ?? []).map((p) => ({
       bidder: p.bidder,
       value: Number(p.value) || 0,
       isUs: !!p.isUs,
     }));
+
+    /* ✅ NEW — section readiness counters */
+    const counts = computeSectionCounts(docTasks);
+
+    /* ✅ NEW — expand sections with ready/total + todos sorted by index */
+    const sections = (tender.sections || [])
+      .slice()
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      .map((s) => {
+        const c = counts[s.id] || { ready: 0, total: 0 };
+        return {
+          id: s.id,
+          key: s.key,
+          title: s.title,
+          description: s.description ?? "",
+          portalHint: s.portalHint ?? "",
+          order: s.order ?? 0,
+          readyCount: c.ready,
+          totalCount: c.total,
+          todoItems: (s.todoItems || []).map((t) => ({
+            id: t.id,
+            title: t.title,
+            done: !!t.done,
+          })),
+        };
+      });
 
     res.json({
       success: true,
@@ -143,7 +231,12 @@ const getSubmissionDetail = async (req, res) => {
         deadlineDays,
         readiness: tender.readiness ?? 0,
 
-        /* ✅ Bid summary */
+        /* ✅ NEW — package + notes */
+        packageMode: tender.packageMode ?? "",
+        packageLabel: tender.packageLabel ?? "",
+        notes: tender.notes ?? "",
+        sections,
+
         bidSummary: {
           ourBidValue: bidValue,
           tenderSecurity,
@@ -152,14 +245,12 @@ const getSubmissionDetail = async (req, res) => {
           currency: tender.currency || "BDT",
         },
 
-        /* ✅ Other participants table */
         otherParticipants,
-
-        /* ✅ Documents submitted (right panel) */
         documentsSubmitted,
 
         docTasks: docTasks.map((t) => ({
           id: t._id,
+          sectionId: t.sectionId || "",
           title: t.title,
           owner: t.owner,
           fileName: t.fileName,
@@ -212,4 +303,9 @@ const getSubmissionDetail = async (req, res) => {
   }
 };
 
-module.exports = { listSubmissions, getSubmissionDetail };
+module.exports = {
+  listSubmissions,
+  getSubmissionDetail,
+  /* helper — usable by tender.controller.js */
+  recomputeReadiness,
+};

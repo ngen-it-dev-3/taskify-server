@@ -9,6 +9,8 @@ const TenderDocumentTaskSchema = new mongoose.Schema(
             required: true,
             index: true,
         },
+        /** Optional: scope this task under a section of the tender's submission package */
+        sectionId: { type: String, default: "", index: true },
         title: { type: String, required: true, trim: true },
         owner: { type: String, default: "" },
         fileName: { type: String, default: "No file uploaded yet" },

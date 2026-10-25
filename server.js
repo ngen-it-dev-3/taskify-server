@@ -23,11 +23,15 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
-// ==================== CRON IMPORTS (TOP OF FILE) ====================
+// cPanel/Nginx reverse proxy এর পেছনে সঠিক IP পাওয়ার জন্য
+app.set("trust proxy", 1);
+
+// ==================== CRON IMPORTS ====================
 const TenderSettings = require("./src/models/TenderSettings.model");
 const { runCrawlInternal } = require("./src/services/crawlScheduler.service");
 
 // ==================== SOCKET.IO ====================
+// আপনার কাস্টম ফাংশনটি কল করা হচ্ছে (এখানে server পাস করতে হবে)
 const { initializeSocket } = require("./src/socket/index");
 const io = initializeSocket(server);
 app.set("io", io);
@@ -56,21 +60,25 @@ app.use(
   }),
 );
 
+// CORS কনফিগারেশন
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5000",
+  "http://localhost:3001",
+  "https://taskify-frontend-alpha.vercel.app",
+  "https://orvix.ngengroup.org",
+  "https://orvix-backend.ngengroup.org",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
 app.use(
   cors({
     origin: function (origin, callback) {
-      const allowedOrigins = [
-        "http://localhost:3000",
-        "http://localhost:5000",
-        "http://localhost:3001",
-        "https://taskify-frontend-alpha.vercel.app",
-        "https://taskify-server-5gat.onrender.com",
-        undefined,
-      ];
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
       } else {
-        console.log(`CORS blocked: ${origin}`);
+        console.log(`❌ CORS blocked: ${origin}`);
         callback(new Error(`Origin ${origin} not allowed by CORS`));
       }
     },
@@ -91,6 +99,7 @@ app.use(
   }),
 );
 
+// OPTIONS রিকোয়েস্ট হ্যান্ডেল করা (cPanel/Passenger এ এরর এড়াতে)
 app.options("*", cors());
 
 app.use(compression());
@@ -100,8 +109,12 @@ app.use(cookieParser());
 app.use(limiter);
 
 // ==================== STATIC FILES ====================
+// ✅ Revert to the simplest, most reliable path
 const uploadsPath = path.join(__dirname, "uploads");
+
 console.log(`📁 Uploads directory: ${uploadsPath}`);
+
+console.log(`📁 Uploads directory (STatic): ${uploadsPath}`);
 
 const directories = [
   { path: uploadsPath, name: "uploads" },
@@ -128,20 +141,11 @@ app.use(
     setHeaders: (res, filePath) => {
       const ext = path.extname(filePath).toLowerCase();
       const mimeTypes = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-        ".svg": "image/svg+xml",
-        ".ico": "image/x-icon",
-        ".webm": "audio/webm",
-        ".mp3": "audio/mpeg",
-        ".wav": "audio/wav",
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+        ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+        ".ico": "image/x-icon", ".webm": "audio/webm", ".mp3": "audio/mpeg", ".wav": "audio/wav",
       };
-      if (mimeTypes[ext]) {
-        res.setHeader("Content-Type", mimeTypes[ext]);
-      }
+      if (mimeTypes[ext]) res.setHeader("Content-Type", mimeTypes[ext]);
       res.setHeader("Cache-Control", "public, max-age=31536000");
     },
   }),
@@ -153,11 +157,8 @@ app.get("/test-uploads", (req, res) => {
     const tasksPath = path.join(uploadsPath, "tasks");
     const files = fs.existsSync(tasksPath) ? fs.readdirSync(tasksPath) : [];
     res.json({
-      success: true,
-      uploadsPath,
-      tasksPath,
-      filesCount: files.length,
-      files: files.slice(0, 20),
+      success: true, uploadsPath, tasksPath,
+      filesCount: files.length, files: files.slice(0, 20),
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -195,7 +196,6 @@ const pricingPlanRoutes = require("./src/routes/pricingPlan.routes");
 const timerRoutes = require("./src/routes/timer.routes");
 const feedbackRoutes = require("./src/routes/feedback.routes");
 const expenseRoutes = require("./src/routes/expense.routes");
-
 const channelRoutes = require("./src/routes/channel.routes");
 const messageRoutes = require("./src/routes/message.routes");
 const voiceRoutes = require("./src/routes/voice.routes");
@@ -209,7 +209,6 @@ const client360Routes = require('./src/routes/client360/client360.routes');
 const salesOrderRoutes = require('./src/routes/salesOrder/salesOrder.routes');
 const numberingSettings = require('./src/routes/onlineCrm/numberingSettings.routes');
 const tenantRoutes = require("./src/routes/tenant.routes");
-
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
@@ -246,15 +245,13 @@ app.use("/api/v1/expenses", expenseRoutes);
 app.use("/api/v1/tenders", tenderRoutes);
 app.use('/api/v1/crm/rfq', rfqRoutes);
 app.use('/api/v1/crm/quotation', quotationRoutes);
-app.use('/api/v1/sales-crm', salesCrmRoutes); 
+app.use('/api/v1/sales-crm', salesCrmRoutes);
 app.use('/api/v1/online-crm', onlineCrmRoutes);
 app.use('/api/v1/dmar', dmarRoutes);
 app.use('/api/v1/clients', client360Routes);
 app.use('/api/v1/sales-orders', salesOrderRoutes);
 app.use('/api/v1/numbering-settings', numberingSettings);
 app.use("/api/v1/tenant", tenantRoutes);
-
-
 
 // ==================== HEALTH ====================
 app.get("/health", (req, res) => {
@@ -281,18 +278,14 @@ app.get("/", (req, res) => {
 // ==================== DEBUG ====================
 const { User } = require("./src/models/User.model");
 
-app.get(
-  "/api/debug/users",
-  authenticate,
-  requireRole("super_admin", "admin"),
-  async (req, res) => {
-    try {
-      const users = await User.find().select("email fullName role");
-      res.json({ success: true, data: users, count: users.length });
-    } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
-    }
-  },
+app.get("/api/debug/users", authenticate, requireRole("super_admin", "admin"), async (req, res) => {
+  try {
+    const users = await User.find().select("email fullName role");
+    res.json({ success: true, data: users, count: users.length });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+},
 );
 
 // ==================== 404 ====================
@@ -331,7 +324,7 @@ const connectDB = async (retries = 5, delay = 5000) => {
   }
 };
 
-// ==================== CRON (defined as function, not executed here) ====================
+// ==================== CRON ====================
 let lastRunKey = "";
 
 function startCrawlCron() {
@@ -350,9 +343,7 @@ function startCrawlCron() {
 
       console.log(`[cron] running scheduled tender crawl at ${current}`);
       const result = await runCrawlInternal({ userId: null });
-      console.log(
-        `[cron] done — sites=${result.sitesChecked} new=${result.newFound} matched=${result.matched}`,
-      );
+      console.log(`[cron] done — sites=${result.sitesChecked} new=${result.newFound} matched=${result.matched}`);
     } catch (err) {
       console.error("[cron] crawl failed:", err.message);
     }
@@ -377,14 +368,14 @@ const startServer = async () => {
   console.log(`\n📁 Uploads directory: ${uploadsPath}`);
   console.log(`📁 Uploads exists: ${fs.existsSync(uploadsPath)}`);
 
-  /* Start cron ONLY after DB connected */
   if (dbConnected) {
     startCrawlCron();
   } else {
     console.warn("⚠️  Cron skipped (no DB)");
   }
 
-  server.listen(PORT, () => {
+  // cPanel/Passenger এর জন্য app.listen ব্যবহার করা বাধ্যতামূলক
+  app.listen(PORT, () => {
     console.log(`\n📡 Server:          http://localhost:${PORT}`);
     console.log(`🌍 Environment:     ${process.env.NODE_ENV || "development"}`);
     console.log(`💾 Database:        ${dbConnected ? "Connected ✅" : "Disconnected ⚠️"}`);
@@ -409,12 +400,16 @@ const gracefulShutdown = async () => {
     await mongoose.connection.close();
     console.log('📦 MongoDB connection closed');
   }
+
   if (io) {
-    await io.close();
+    io.close();
     console.log('🔌 Socket.io closed');
   }
 
-  // ⭐ Close puppeteer
+  server.close(() => {
+    console.log('🛑 HTTP Server closed');
+  });
+
   try {
     const { closePdfBrowser } = require('./src/utils/quotationPdf');
     await closePdfBrowser();

@@ -9,13 +9,14 @@ const {
 } = require("../../middleware/upload.middleware");
 const { sendMail } = require("../../utils/mailer");
 
-/* Fields the list card renders — everything else stays on the server. */
-/* Fields the list + detail-review panels render.
-   The TenderDetailReview component reads advertisement*, attachments,
-   eligibility, recordedBy, responsiblePerson, tenderLink, note, etc.
-   — every one of those MUST be included here or they vanish on refetch. */
+/* Lazy-require to avoid circular dep issues with submission.controller */
+function getRecomputeReadiness() {
+  // eslint-disable-next-line global-require
+  return require("./submission.controller").recomputeReadiness;
+}
+
+/* ============================================================ */
 const LIST_FIELDS = [
-  /* basic */
   "tenderer",
   "title",
   "description",
@@ -23,8 +24,6 @@ const LIST_FIELDS = [
   "tenderType",
   "draft",
   "currency",
-
-  /* value + dates */
   "tentativeBudget",
   "bidValue",
   "lastDateOfPurchase",
@@ -32,24 +31,16 @@ const LIST_FIELDS = [
   "submittedAt",
   "submitted",
   "lostAt",
-
-  /* status */
   "readiness",
   "docStatus",
   "mode",
   "securityMode",
-
-  /* security */
   "tenderSecurityAmount",
   "tenderSecurityValidity",
   "performanceSecurityAmount",
   "performanceSecurityValidity",
-
-  /* owner */
   "owner",
   "departmentId",
-
-  /* ---------- TenderDetailReview fields ---------- */
   "advertisementFile",
   "advertisementUrl",
   "advertisementUploadedBy",
@@ -61,21 +52,22 @@ const LIST_FIELDS = [
   "responsiblePerson",
   "tenderLink",
   "note",
-
-  /* ---------- other-stage detail panels ---------- */
   "lossReason",
   "lowestCompliantBidder",
   "lowestCompliantValue",
   "checklist",
   "otherParticipants",
-
-  /* timestamps */
+  /* ✅ NEW */
+  "packageMode",
+  "packageLabel",
+  "sections",
+  "notes",
   "updatedAt",
   "createdAt",
 ].join(" ");
 
 /* ============================================================
- * LIST TENDERS — optimized
+ * LIST TENDERS
  * ============================================================ */
 const listTenders = async (req, res) => {
   try {
@@ -95,7 +87,6 @@ const listTenders = async (req, res) => {
     if (includeDrafts !== "true") query.draft = { $ne: true };
 
     if (search && String(search).trim()) {
-      // Use text index instead of regex for speed
       query.$text = { $search: String(search).trim() };
     }
 
@@ -130,7 +121,7 @@ const listTenders = async (req, res) => {
 };
 
 /* ============================================================
- * GET ONE — parallel queries
+ * GET ONE
  * ============================================================ */
 const getTender = async (req, res) => {
   try {
@@ -288,6 +279,13 @@ const updateTender = async (req, res) => {
       "lossReason",
       "lowestCompliantBidder",
       "lowestCompliantValue",
+      /* ✅ NEW */
+      "packageMode",
+      "packageLabel",
+      "sections",
+      "notes",
+      "priority",
+      "tenderSecurityPurchased",
     ];
 
     for (const k of allowed) {
@@ -338,7 +336,6 @@ const changeStage = async (req, res) => {
       tender.lostAt = new Date();
       if (lossReason) tender.lossReason = lossReason;
     }
-    // ⭐ Set wonAt when tender is marked as won
     if (stage === "won") {
       tender.wonAt = new Date();
     }
@@ -353,8 +350,6 @@ const changeStage = async (req, res) => {
 
     await tender.save();
 
-    // ⭐ NEW — When a tender transitions TO "won", push it to Sales CRM Forecast
-    // ⭐ When a tender transitions TO "won" → push to Sales CRM + create Sales Order
     if (stage === "won" && fromStage !== "won") {
       const userId = req.user?._id || req.user?.id;
       const userName = req.user?.fullName || req.user?.name || req.user?.email;
@@ -366,7 +361,6 @@ const changeStage = async (req, res) => {
         console.error("[changeStage] pushFromTender failed:", e.message);
       }
 
-      // ⭐ Create Sales Order
       try {
         const { SalesOrderService } = require("../../services/salesOrder/salesOrder.service");
         await SalesOrderService.createFromWon({
@@ -410,7 +404,7 @@ const deleteTender = async (req, res) => {
  * ============================================================ */
 const addDocTask = async (req, res) => {
   try {
-    const { title, owner, status, fileName } = req.body;
+    const { title, owner, status, fileName, sectionId } = req.body; // ✅ MUST include sectionId here
     if (!title?.trim()) {
       return res
         .status(400)
@@ -426,10 +420,12 @@ const addDocTask = async (req, res) => {
 
     const count = await TenderDocumentTask.countDocuments({
       tenderId: tender._id,
+      sectionId: sectionId || "",
     });
 
     const task = await TenderDocumentTask.create({
       tenderId: tender._id,
+      sectionId: sectionId || "", // ✅ MUST save it to the database!
       title: title.trim(),
       owner: owner || "",
       status: status || "Pending",
@@ -438,6 +434,13 @@ const addDocTask = async (req, res) => {
       createdBy: req.user._id,
       updatedBy: req.user._id,
     });
+
+    // Recompute readiness
+    try {
+      await getRecomputeReadiness()(tender._id);
+    } catch (e) {
+      console.warn("[addDocTask] readiness recompute failed:", e.message);
+    }
 
     res.status(201).json({ success: true, data: task });
   } catch (error) {
@@ -455,12 +458,26 @@ const updateDocTask = async (req, res) => {
         .json({ success: false, message: "Task not found" });
     }
 
-    const allowed = ["title", "owner", "status", "fileName", "fileUrl", "order"];
+    const allowed = [
+      "title",
+      "owner",
+      "status",
+      "fileName",
+      "fileUrl",
+      "order",
+      "sectionId",
+    ];
     for (const k of allowed) {
       if (req.body[k] !== undefined) task[k] = req.body[k];
     }
     task.updatedBy = req.user._id;
     await task.save();
+
+    try {
+      await getRecomputeReadiness()(task.tenderId);
+    } catch (e) {
+      console.warn("[updateDocTask] readiness recompute failed:", e.message);
+    }
 
     res.json({ success: true, data: task });
   } catch (error) {
@@ -477,6 +494,13 @@ const deleteDocTask = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Task not found" });
     }
+
+    try {
+      await getRecomputeReadiness()(task.tenderId);
+    } catch (e) {
+      console.warn("[deleteDocTask] readiness recompute failed:", e.message);
+    }
+
     res.json({ success: true, message: "Task deleted" });
   } catch (error) {
     console.error("deleteDocTask error:", error);
@@ -533,9 +557,7 @@ const uploadAttachment = async (req, res) => {
 
     const tender = await Tender.findById(req.params.id);
     if (!tender) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch { }
+      try { fs.unlinkSync(req.file.path); } catch { }
       return res
         .status(404)
         .json({ success: false, message: "Tender not found" });
@@ -556,7 +578,6 @@ const uploadAttachment = async (req, res) => {
     await tender.save();
 
     const created = tender.attachments[tender.attachments.length - 1];
-
     console.log("[uploadAttachment] ✅ saved:", created._id, "→", created.url);
 
     res.status(201).json({ success: true, data: created });
@@ -620,9 +641,7 @@ const uploadAdvertisement = async (req, res) => {
 
     const tender = await Tender.findById(req.params.id);
     if (!tender) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch { }
+      try { fs.unlinkSync(req.file.path); } catch { }
       return res
         .status(404)
         .json({ success: false, message: "Tender not found" });
@@ -701,7 +720,273 @@ const deleteAdvertisement = async (req, res) => {
 };
 
 /* ============================================================
- * ✅ NOTIFY FINANCE — email a custom list of recipients
+ * ✅ NEW — PREPARATION (packageMode / packageLabel / notes)
+ * ============================================================ */
+const updatePreparation = async (req, res) => {
+  try {
+    const { packageMode, packageLabel, notes } = req.body || {};
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    if (packageMode !== undefined) {
+      const allowed = ["section_by_section", "single_package", "portal", ""];
+      if (!allowed.includes(packageMode)) {
+        return res.status(400).json({
+          success: false,
+          message: `packageMode must be one of: ${allowed.join(", ")}`,
+        });
+      }
+      tender.packageMode = packageMode;
+    }
+    if (packageLabel !== undefined) tender.packageLabel = String(packageLabel);
+    if (notes !== undefined) tender.notes = String(notes);
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    res.json({
+      success: true,
+      data: {
+        packageMode: tender.packageMode,
+        packageLabel: tender.packageLabel,
+        notes: tender.notes,
+        sections: tender.sections,
+      },
+    });
+  } catch (error) {
+    console.error("updatePreparation error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * ✅ NEW — SECTIONS CRUD
+ * ============================================================ */
+function newId() {
+  return (
+    Date.now().toString(36) +
+    "-" +
+    Math.random().toString(36).slice(2, 8)
+  );
+}
+
+const createSection = async (req, res) => {
+  try {
+    const { key, title, description, portalHint } = req.body || {};
+    if (!title?.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "title is required" });
+    }
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    const order = tender.sections?.length || 0;
+    const section = {
+      id: newId(),
+      key: key?.trim() || `section_${order}`,
+      title: title.trim(),
+      description: description || "",
+      portalHint: portalHint || "",
+      order,
+      todoItems: [],
+    };
+    tender.sections.push(section);
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    res.status(201).json({ success: true, data: section });
+  } catch (error) {
+    console.error("createSection error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateSection = async (req, res) => {
+  try {
+    const { sectionId } = req.params;
+    const { title, description, portalHint, order, key } = req.body || {};
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    const section = tender.sections.find((s) => s.id === sectionId);
+    if (!section) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Section not found" });
+    }
+
+    if (title !== undefined) section.title = String(title);
+    if (description !== undefined) section.description = String(description);
+    if (portalHint !== undefined) section.portalHint = String(portalHint);
+    if (order !== undefined) section.order = Number(order);
+    if (key !== undefined) section.key = String(key);
+
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    res.json({ success: true, data: section });
+  } catch (error) {
+    console.error("updateSection error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteSection = async (req, res) => {
+  try {
+    const { sectionId } = req.params;
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+
+    const before = tender.sections.length;
+    tender.sections = tender.sections.filter((s) => s.id !== sectionId);
+    if (tender.sections.length === before) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Section not found" });
+    }
+
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    /* Orphan tasks under this section get unlinked to "Unsectioned" */
+    await TenderDocumentTask.updateMany(
+      { tenderId: tender._id, sectionId },
+      { $set: { sectionId: "" } },
+    );
+
+    try {
+      await getRecomputeReadiness()(tender._id);
+    } catch (e) { /* ignore */ }
+
+    res.json({ success: true, message: "Section removed" });
+  } catch (error) {
+    console.error("deleteSection error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * ✅ NEW — TODOS CRUD
+ * ============================================================ */
+const addTodo = async (req, res) => {
+  try {
+    const { sectionId } = req.params;
+    const { title } = req.body || {};
+    if (!title?.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "title is required" });
+    }
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+    const section = tender.sections.find((s) => s.id === sectionId);
+    if (!section) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Section not found" });
+    }
+
+    const todo = { id: newId(), title: title.trim(), done: false };
+    section.todoItems.push(todo);
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    res.status(201).json({ success: true, data: todo });
+  } catch (error) {
+    console.error("addTodo error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateTodo = async (req, res) => {
+  try {
+    const { sectionId, todoId } = req.params;
+    const { title, done } = req.body || {};
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+    const section = tender.sections.find((s) => s.id === sectionId);
+    if (!section) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Section not found" });
+    }
+    const todo = section.todoItems.find((t) => t.id === todoId);
+    if (!todo) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Todo not found" });
+    }
+    if (title !== undefined) todo.title = String(title);
+    if (done !== undefined) todo.done = !!done;
+
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    res.json({ success: true, data: todo });
+  } catch (error) {
+    console.error("updateTodo error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteTodo = async (req, res) => {
+  try {
+    const { sectionId, todoId } = req.params;
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Tender not found" });
+    }
+    const section = tender.sections.find((s) => s.id === sectionId);
+    if (!section) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Section not found" });
+    }
+    const before = section.todoItems.length;
+    section.todoItems = section.todoItems.filter((t) => t.id !== todoId);
+    if (section.todoItems.length === before) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Todo not found" });
+    }
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    res.json({ success: true, message: "Todo removed" });
+  } catch (error) {
+    console.error("deleteTodo error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * NOTIFY FINANCE — unchanged
  * ============================================================ */
 function escapeHtml(s) {
   return String(s)
@@ -745,9 +1030,7 @@ const notifyFinance = async (req, res) => {
       ? new Date(tender.lastDateOfSubmission).toLocaleString("en-GB")
       : "—";
 
-    /* ✅ Build the tender URL used inside the email button */
     const CLIENT_URL = process.env.CLIENT_URL || "https://taskify-server-5gat.onrender.com";
-    // const tenderUrl = `${CLIENT_URL}/tenders/manage?tenderId=${tender._id}`;
     const submissionUrl = `${CLIENT_URL}/tenders/submissions`;
 
     const subject = `[Tender] Banking docs pending — ${tender.tenderer}`;
@@ -762,184 +1045,47 @@ const notifyFinance = async (req, res) => {
     const html = `
 <!doctype html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Docs Pending — ${escapeHtml(tender.tenderer || "Tender")}</title>
-  </head>
-  <body style="margin:0;padding:0;background:#faf7f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#0f172a;">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>Docs Pending</title></head>
+  <body style="margin:0;padding:0;background:#faf7f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#0f172a;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf7f0;padding:32px 16px;">
-      <tr>
-        <td align="center">
-          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:14px;border:1px solid #e5e0d5;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.04);">
-
-            <!-- Header -->
-            <tr>
-              <td style="background:#a97400;padding:22px 28px;">
-                <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#fce9c2;">
-                  Tender Dashboard
-                </p>
-                <h1 style="margin:6px 0 0;font-size:20px;font-weight:700;color:#ffffff;letter-spacing:-0.01em;">
-                  Documents Pending
-                </h1>
-              </td>
-            </tr>
-
-            <!-- Intro -->
-            <tr>
-              <td style="padding:24px 28px 8px;">
-                <p style="margin:0;font-size:14px;line-height:1.6;color:#334155;">
-                  Hi Finance Team,
-                </p>
-                <p style="margin:10px 0 0;font-size:14px;line-height:1.6;color:#334155;">
-                  The following tender is awaiting <strong>documents</strong> — please review and action at the earliest.
-                </p>
-              </td>
-            </tr>
-
-            <!-- Badges -->
-            <tr>
-              <td style="padding:16px 28px 0;">
-                <table role="presentation" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <td style="padding-right:8px;">
-                      <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:#f4ead6;color:#8a6a2b;font-size:12px;font-weight:700;letter-spacing:0.02em;">
-                        ${escapeHtml(tender.tenderType || "Tender")}
-                      </span>
-                    </td>
-                    <td>
-                      <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:#fef2f2;color:#b91c1c;font-size:12px;font-weight:700;letter-spacing:0.02em;">
-                        ⚠ Docs Pending
-                      </span>
-                    </td>
-                  </tr>
+      <tr><td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:14px;border:1px solid #e5e0d5;overflow:hidden;">
+          <tr><td style="background:#a97400;padding:22px 28px;">
+            <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#fce9c2;">Tender Dashboard</p>
+            <h1 style="margin:6px 0 0;font-size:20px;font-weight:700;color:#ffffff;">Documents Pending</h1>
+          </td></tr>
+          <tr><td style="padding:24px 28px 8px;">
+            <p style="margin:0;font-size:14px;line-height:1.6;color:#334155;">Hi Finance Team,</p>
+            <p style="margin:10px 0 0;font-size:14px;line-height:1.6;color:#334155;">The following tender is awaiting <strong>documents</strong> — please review and action at the earliest.</p>
+          </td></tr>
+          <tr><td style="padding:18px 28px 0;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e0d5;border-radius:10px;overflow:hidden;">
+              <tr><td style="padding:14px 16px;background:#faf7f0;border-bottom:1px solid #e5e0d5;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Tender Details</td></tr>
+              <tr><td style="padding:0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                  <tr><td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;width:40%;">Tenderer</td><td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1ede2;">${escapeHtml(tender.tenderer || "—")}</td></tr>
+                  <tr><td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;">Title</td><td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1ede2;">${escapeHtml(tender.title || "—")}</td></tr>
+                  <tr><td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;">Submission Deadline</td><td style="padding:12px 16px;font-size:13px;color:#b91c1c;font-weight:700;border-bottom:1px solid #f1ede2;">${deadline}</td></tr>
+                  <tr><td style="padding:12px 16px;font-size:12px;color:#64748b;">Requested By</td><td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;">${escapeHtml(req.user?.fullName || "—")}</td></tr>
                 </table>
-              </td>
-            </tr>
-
-            <!-- Detail card -->
-            <tr>
-              <td style="padding:18px 28px 0;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e0d5;border-radius:10px;overflow:hidden;">
-                  <tr>
-                    <td style="padding:14px 16px;background:#faf7f0;border-bottom:1px solid #e5e0d5;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">
-                      Tender Details
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style="padding:0;">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-                        <tr>
-                          <td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;width:40%;">Tenderer</td>
-                          <td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1ede2;">${escapeHtml(tender.tenderer || "—")}</td>
-                        </tr>
-                        <tr>
-                          <td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;">Title</td>
-                          <td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1ede2;">${escapeHtml(tender.title || "—")}</td>
-                        </tr>
-                        <tr>
-                          <td style="padding:12px 16px;font-size:12px;color:#64748b;border-bottom:1px solid #f1ede2;">Submission Deadline</td>
-                          <td style="padding:12px 16px;font-size:13px;color:${deadline === "—" ? "#94a3b8" : "#b91c1c"};font-weight:700;border-bottom:1px solid #f1ede2;">${deadline}</td>
-                        </tr>
-                        <tr>
-                          <td style="padding:12px 16px;font-size:12px;color:#64748b;">Requested By</td>
-                          <td style="padding:12px 16px;font-size:13px;color:#0f172a;font-weight:600;">${escapeHtml(req.user?.fullName || "—")}</td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            ${note
-        ? `
-            <tr>
-              <td style="padding:18px 28px 0;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-left:3px solid #a97400;background:#fdf8ec;border-radius:6px;">
-                  <tr>
-                    <td style="padding:12px 16px;">
-                      <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#8a6a2b;">Note</p>
-                      <p style="margin:6px 0 0;font-size:13px;line-height:1.6;color:#334155;">${escapeHtml(note)}</p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            `
-        : ""
-      }
-
-            <!-- Action -->
-            <tr>
-              <td style="padding:22px 28px 0;">
-                <p style="margin:0;font-size:13px;line-height:1.6;color:#334155;">
-                  Please prepare and attach the required documents (pay order, bank guarantee, etc.) so the submission can proceed on time.
-                </p>
-              </td>
-            </tr>
-            <!-- Actions: two buttons side by side -->
-            <tr>
-              <td style="padding:22px 28px 0;" align="left">
-                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <!-- Button 2: View Submission -->
-                    <td valign="middle">
-                      <!--[if mso]>
-                      <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
-                        href="${submissionUrl}"
-                        style="height:40px;v-text-anchor:middle;width:170px;"
-                        arcsize="10%" stroke="f" fillcolor="#a97400">
-                        <w:anchorlock/>
-                        <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:13px;font-weight:700;">
-                          View Submission
-                        </center>
-                      </v:roundrect>
-                      <![endif]-->
-                      <!--[if !mso]><!-- -->
-                      <a href="${submissionUrl}" target="_blank"
-                        style="display:inline-block;background-color:#a97400;border:1px solid #a97400;border-radius:4px;color:#ffffff !important;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;line-height:1.2;padding:10px 20px;text-decoration:none;text-align:center;mso-padding-alt:0;mso-text-raise:8px;">
-                        View Submission
-                      </a>
-                      <!--<![endif]-->
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <!-- Signature -->
-            <tr>
-              <td style="padding:22px 28px 0;">
-                <p style="margin:0;font-size:13px;color:#334155;">
-                  Regards,<br />
-                  <strong style="color:#0f172a;">${escapeHtml(req.user?.fullName || "Tender Desk")}</strong>
-                </p>
-              </td>
-            </tr>
-
-            <!-- Footer -->
-            <tr>
-              <td style="padding:24px 28px 26px;">
-                <hr style="border:none;border-top:1px solid #e5e0d5;margin:0 0 14px;" />
-                <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6;">
-                  This is an automated notification from the Tender Dashboard.<br />
-                  Generated on ${new Date().toLocaleString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })}.
-                </p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
+              </td></tr>
+            </table>
+          </td></tr>
+          ${noteBlock ? `<tr><td style="padding:18px 28px 0;">${noteBlock}</td></tr>` : ""}
+          <tr><td style="padding:22px 28px 0;" align="left">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle">
+              <a href="${submissionUrl}" target="_blank" style="display:inline-block;background-color:#a97400;border-radius:4px;color:#ffffff !important;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;padding:10px 20px;text-decoration:none;">View Submission</a>
+            </td></tr></table>
+          </td></tr>
+          <tr><td style="padding:24px 28px 26px;">
+            <hr style="border:none;border-top:1px solid #e5e0d5;margin:0 0 14px;" />
+            <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6;">Automated notification from the Tender Dashboard.</p>
+          </td></tr>
+        </table>
+      </td></tr>
     </table>
   </body>
-</html>
-`;
+</html>`;
 
     const results = await Promise.allSettled(
       valid.map((email) => sendMail({ to: email, subject, html })),
@@ -948,26 +1094,13 @@ const notifyFinance = async (req, res) => {
     const sent = results.filter((r) => r.status === "fulfilled").length;
     const failed = results.length - sent;
 
-    results.forEach((r, i) => {
-      if (r.status === "rejected") {
-        console.warn(
-          `[notifyFinance] mail to ${valid[i]} failed:`,
-          r.reason?.message || r.reason,
-        );
-      }
-    });
-
     return res.json({
       success: true,
       message:
         failed === 0
           ? `Notified ${sent} recipient${sent === 1 ? "" : "s"}`
           : `Notified ${sent} of ${results.length} (${failed} failed)`,
-      data: {
-        recipients: valid,
-        sent,
-        failed,
-      },
+      data: { recipients: valid, sent, failed },
     });
   } catch (error) {
     console.error("notifyFinance error:", error);
@@ -977,6 +1110,98 @@ const notifyFinance = async (req, res) => {
   }
 };
 
+const applySectionTemplate = async (req, res) => {
+  try {
+    const { mode } = req.body;
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) return res.status(404).json({ success: false, message: "Tender not found" });
+
+    const oldSections = tender.sections || [];
+
+    // 1. Define templates
+    let newSections = [];
+    if (mode === "portal" || mode === "section_by_section") {
+      newSections = [
+        { key: "company_eligibility", title: "Company & eligibility", description: "Legal documents, company profile and eligibility declarations.", portalHint: 'Upload in the portal under "Company & eligibility"' },
+        { key: "technical", title: "Technical", description: "Compliance statement, datasheets, work orders, CVs and partner certificates.", portalHint: 'Upload in the portal under "Technical"' },
+        { key: "financial", title: "Financial / price", description: "Price schedule, commercial offer and banking documents.", portalHint: 'Upload in the portal under "Financial / price"' },
+        { key: "tender_security", title: "Tender security", description: "Pay order, bank guarantee, or bid security.", portalHint: 'Upload in the portal under "Tender security"' },
+        { key: "review", title: "Review & package", description: "Final review, sign-off, and submission package.", portalHint: 'Confirm all documents before final submission' }
+      ];
+    } else if (mode === "single_package") {
+      newSections = [
+        { key: "company_eligibility", title: "Company & eligibility", description: "Legal documents, company profile and eligibility declarations.", portalHint: "Separate file: Bangladesh_Meteorological_Dept_technical.pdf" },
+        { key: "technical", title: "Technical", description: "Compliance statement, datasheets, work orders, CVs and partner certificates.", portalHint: "Separate file: Bangladesh_Meteorological_Dept_technical.pdf" },
+        { key: "financial", title: "Financial / price", description: "Price schedule, commercial offer and banking documents.", portalHint: "Separate file: Bangladesh_Meteorological_Dept_financial.pdf" },
+        { key: "review", title: "Review & package", description: "Final review, sign-off, and submission package.", portalHint: 'Confirm all documents before final submission' }
+      ];
+    } else if (mode === "rfq") {
+      newSections = [
+        { key: "company_eligibility", title: "Company & eligibility", description: "Legal documents, company profile and eligibility declarations.", portalHint: 'Upload in the portal under "Company & eligibility"' },
+        { key: "technical", title: "Technical", description: "Compliance statement, datasheets, work orders, CVs and partner certificates.", portalHint: "Included in the technical response" },
+        { key: "review", title: "Review & package", description: "Final review, sign-off, and submission package.", portalHint: 'Confirm all documents before final submission' }
+      ];
+    }
+
+    // 2. Map old tasks to new sections based on `key`
+    const oldKeyToId = {};
+    oldSections.forEach(s => { oldKeyToId[s.key] = s.id; });
+
+    // 3. Format new sections
+    const formattedSections = newSections.map((s, i) => ({
+      ...s,
+      id: Date.now().toString(36) + "-" + i,
+      order: i,
+      todoItems: []
+    }));
+
+    // 4. Update tasks that match old keys to the new section IDs
+    for (const newSec of formattedSections) {
+      const oldId = oldKeyToId[newSec.key];
+      if (oldId) {
+        await TenderDocumentTask.updateMany(
+          { tenderId: tender._id, sectionId: oldId },
+          { $set: { sectionId: newSec.id } }
+        );
+      }
+    }
+
+    tender.sections = formattedSections;
+    tender.packageMode = mode;
+
+    if (mode === "portal" || mode === "section_by_section") tender.packageLabel = "Local e-procurement portal — section by section";
+    if (mode === "single_package") tender.packageLabel = "International — separate Technical and Financial files";
+    if (mode === "rfq") tender.packageLabel = "RFQ / EOI — initial level (technical and datasheets)";
+
+    // ✅ FIX: Force the score to reset to 0 immediately before saving
+    tender.readiness = 0;
+    tender.docStatus = "Docs pending";
+
+    await tender.save();
+
+    // Unlink tasks that no longer have a matching section
+    const validSectionIds = formattedSections.map(s => s.id);
+    await TenderDocumentTask.updateMany(
+      { tenderId: tender._id, sectionId: { $nin: validSectionIds, $ne: "" } },
+      { $set: { sectionId: "" } }
+    );
+
+    // ✅ FIX: Run the calculation and wait for it to finish
+    try {
+      await getRecomputeReadiness()(tender._id);
+    } catch (e) {
+      console.warn("Failed to recompute after template switch:", e);
+    }
+
+    // ✅ FIX: Fetch the absolute latest version of the tender to send back to the frontend
+    const updatedTender = await Tender.findById(tender._id).lean();
+
+    res.json({ success: true, data: updatedTender });
+  } catch (error) {
+    console.error("applySectionTemplate error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
 module.exports = {
   listTenders,
@@ -994,4 +1219,13 @@ module.exports = {
   uploadAdvertisement,
   deleteAdvertisement,
   notifyFinance,
+  /* ✅ NEW */
+  applySectionTemplate,
+  updatePreparation,
+  createSection,
+  updateSection,
+  deleteSection,
+  addTodo,
+  updateTodo,
+  deleteTodo,
 };
