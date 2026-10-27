@@ -1,6 +1,7 @@
 // src/controllers/tender/tender.controller.js
 const Tender = require("../../models/Tender.model");
 const TenderDocumentTask = require("../../models/TenderDocumentTask.model");
+const CompanyDocument = require("../../models/CompanyDocument.model"); // ✅ Added
 const path = require("path");
 const fs = require("fs");
 const {
@@ -17,53 +18,16 @@ function getRecomputeReadiness() {
 
 /* ============================================================ */
 const LIST_FIELDS = [
-  "tenderer",
-  "title",
-  "description",
-  "stage",
-  "tenderType",
-  "draft",
-  "currency",
-  "tentativeBudget",
-  "bidValue",
-  "lastDateOfPurchase",
-  "lastDateOfSubmission",
-  "submittedAt",
-  "submitted",
-  "lostAt",
-  "readiness",
-  "docStatus",
-  "mode",
-  "securityMode",
-  "tenderSecurityAmount",
-  "tenderSecurityValidity",
-  "performanceSecurityAmount",
-  "performanceSecurityValidity",
-  "owner",
-  "departmentId",
-  "advertisementFile",
-  "advertisementUrl",
-  "advertisementUploadedBy",
-  "advertisementUploadedAt",
-  "attachments",
-  "eligibility",
-  "eligibilityRequirements",
-  "recordedBy",
-  "responsiblePerson",
-  "tenderLink",
-  "note",
-  "lossReason",
-  "lowestCompliantBidder",
-  "lowestCompliantValue",
-  "checklist",
-  "otherParticipants",
-  /* ✅ NEW */
-  "packageMode",
-  "packageLabel",
-  "sections",
-  "notes",
-  "updatedAt",
-  "createdAt",
+  "tenderer", "title", "description", "stage", "tenderType", "draft", "currency",
+  "tentativeBudget", "bidValue", "lastDateOfPurchase", "lastDateOfSubmission",
+  "submittedAt", "submitted", "lostAt", "readiness", "docStatus", "mode",
+  "securityMode", "tenderSecurityAmount", "tenderSecurityValidity",
+  "performanceSecurityAmount", "performanceSecurityValidity", "owner",
+  "departmentId", "advertisementFile", "advertisementUrl", "advertisementUploadedBy",
+  "advertisementUploadedAt", "attachments", "eligibility", "eligibilityRequirements",
+  "recordedBy", "responsiblePerson", "tenderLink", "note", "lossReason",
+  "lowestCompliantBidder", "lowestCompliantValue", "checklist", "otherParticipants",
+  "packageMode", "packageLabel", "sections", "notes", "updatedAt", "createdAt",
 ].join(" ");
 
 /* ============================================================
@@ -279,7 +243,6 @@ const updateTender = async (req, res) => {
       "lossReason",
       "lowestCompliantBidder",
       "lowestCompliantValue",
-      /* ✅ NEW */
       "packageMode",
       "packageLabel",
       "sections",
@@ -404,7 +367,7 @@ const deleteTender = async (req, res) => {
  * ============================================================ */
 const addDocTask = async (req, res) => {
   try {
-    const { title, owner, status, fileName, sectionId } = req.body; // ✅ MUST include sectionId here
+    const { title, owner, status, fileName, sectionId } = req.body;
     if (!title?.trim()) {
       return res
         .status(400)
@@ -425,7 +388,7 @@ const addDocTask = async (req, res) => {
 
     const task = await TenderDocumentTask.create({
       tenderId: tender._id,
-      sectionId: sectionId || "", // ✅ MUST save it to the database!
+      sectionId: sectionId || "",
       title: title.trim(),
       owner: owner || "",
       status: status || "Pending",
@@ -435,7 +398,6 @@ const addDocTask = async (req, res) => {
       updatedBy: req.user._id,
     });
 
-    // Recompute readiness
     try {
       await getRecomputeReadiness()(tender._id);
     } catch (e) {
@@ -504,6 +466,52 @@ const deleteDocTask = async (req, res) => {
     res.json({ success: true, message: "Task deleted" });
   } catch (error) {
     console.error("deleteDocTask error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
+ * ✅ NEW — ADD COMPANY DOCUMENTS TO TENDER
+ * ============================================================ */
+const addCompanyDocsToTender = async (req, res) => {
+  try {
+    const { tenderId } = req.params;
+    const { documentIds, sectionId } = req.body;
+
+    if (!documentIds || !Array.isArray(documentIds) || documentIds.length === 0) {
+      return res.status(400).json({ success: false, message: "No documents selected" });
+    }
+
+    const tender = await Tender.findById(tenderId);
+    if (!tender) return res.status(404).json({ success: false, message: "Tender not found" });
+
+    // Fetch the full document details from the library
+    const companyDocs = await CompanyDocument.find({ _id: { $in: documentIds } });
+
+    // Map them into docTasks format
+    const newTasks = companyDocs.map(doc => ({
+      title: doc.title,
+      owner: req.user.fullName || "System",
+      status: doc.fileUrl ? "Done" : "Pending",
+      fileName: doc.fileName || "No file attached",
+      fileUrl: doc.fileUrl || "",
+      sectionId: sectionId,
+      companyDocId: doc._id,
+    }));
+
+    // Add to the tender's docTasks array
+    tender.docTasks.push(...newTasks);
+    await tender.save();
+
+    try {
+      await getRecomputeReadiness()(tender._id);
+    } catch (e) {
+      console.warn("[addCompanyDocsToTender] readiness recompute failed:", e.message);
+    }
+
+    res.json({ success: true, message: `${newTasks.length} documents added to tender`, data: tender.docTasks });
+  } catch (error) {
+    console.error("addCompanyDocsToTender error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -986,7 +994,7 @@ const deleteTodo = async (req, res) => {
 };
 
 /* ============================================================
- * NOTIFY FINANCE — unchanged
+ * NOTIFY FINANCE
  * ============================================================ */
 function escapeHtml(s) {
   return String(s)
@@ -1110,6 +1118,9 @@ const notifyFinance = async (req, res) => {
   }
 };
 
+/* ============================================================
+ * APPLY SECTION TEMPLATE
+ * ============================================================ */
 const applySectionTemplate = async (req, res) => {
   try {
     const { mode } = req.body;
@@ -1219,7 +1230,6 @@ module.exports = {
   uploadAdvertisement,
   deleteAdvertisement,
   notifyFinance,
-  /* ✅ NEW */
   applySectionTemplate,
   updatePreparation,
   createSection,
@@ -1228,4 +1238,5 @@ module.exports = {
   addTodo,
   updateTodo,
   deleteTodo,
+  addCompanyDocsToTender, // ✅ NEW EXPORT
 };

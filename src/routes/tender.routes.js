@@ -113,9 +113,12 @@ router.post("/:id/doc-tasks", tenderCtrl.addDocTask);
 router.patch("/:id/doc-tasks/:taskId", tenderCtrl.updateDocTask);
 router.delete("/:id/doc-tasks/:taskId", tenderCtrl.deleteDocTask);
 
+/* ✅ NEW — Add Company Docs to Tender Section */
+router.post("/:id/add-documents", tenderCtrl.addCompanyDocsToTender);
+
 router.patch("/:id/checklist", tenderCtrl.updateChecklist);
 
-/* ✅ NEW — Submission Preparation (package + sections + todos) */
+/* ✅ Submission Preparation (package + sections + todos) */
 router.patch("/:id/preparation", tenderCtrl.updatePreparation);
 
 router.post("/:id/sections", tenderCtrl.createSection);

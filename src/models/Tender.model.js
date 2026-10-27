@@ -48,6 +48,24 @@ const SectionSchema = new mongoose.Schema(
 );
 
 /* ============================================================
+   SUB-SCHEMA — Doc Task (NEW: Added companyDocId)
+   ============================================================ */
+const DocTaskSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true },
+    owner: { type: String },
+    status: { type: String, enum: ["Pending", "In Progress", "Done"], default: "Pending" },
+    fileName: { type: String },
+    fileUrl: { type: String },
+    sectionId: { type: String, default: "" },
+    
+    // ✅ Links this task to a Company Document
+    companyDocId: { type: mongoose.Schema.Types.ObjectId, ref: "CompanyDocument", default: null },
+  },
+  { timestamps: true }
+);
+
+/* ============================================================
    MAIN SCHEMA
    ============================================================ */
 const TenderSchema = new mongoose.Schema(
@@ -176,6 +194,9 @@ const TenderSchema = new mongoose.Schema(
     packageLabel: { type: String, default: "" },
     sections: { type: [SectionSchema], default: [] },
     notes: { type: String, default: "" },
+    
+    /* ---------- DOC TASKS (NEW) ---------- */
+    docTasks: { type: [DocTaskSchema], default: [] },
 
     /* ---------- LOSS INFO ---------- */
     lossReason: { type: String, default: "" },
@@ -184,7 +205,6 @@ const TenderSchema = new mongoose.Schema(
     lostAt: { type: Date, default: null },
 
     /* ---------- status ---------- */
-    /* Add inside TenderSchema */
     priority: {
       type: String,
       enum: ["high", "medium", "low", ""],
