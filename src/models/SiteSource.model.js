@@ -61,6 +61,16 @@ const SiteSourceSchema = new mongoose.Schema(
 
         createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        // ============================================================
+        // CREDENTIALS (NEW)
+        // ============================================================
+        username: { type: String, default: "" },
+        password: { type: String, default: "" }, // Note: In production, encrypt this!
+        credentialType: { type: String, enum: ["Enlisted", "Open bid"], default: "Enlisted" },
+        registeredAs: { type: String, default: "" },
+        registeredEmail: { type: String, default: "" },
+        registrationRenewal: { type: Date, default: null },
+        notes: { type: String, default: "" },
     },
     { timestamps: true },
 );

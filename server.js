@@ -209,6 +209,9 @@ const client360Routes = require('./src/routes/client360/client360.routes');
 const salesOrderRoutes = require('./src/routes/salesOrder/salesOrder.routes');
 const numberingSettings = require('./src/routes/onlineCrm/numberingSettings.routes');
 const tenantRoutes = require("./src/routes/tenant.routes");
+const credentialRoutes = require("./src/routes/credential.routes");
+const tenderClientRoutes = require("./src/routes/tenderClient.routes");
+
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
@@ -252,6 +255,9 @@ app.use('/api/v1/clients', client360Routes);
 app.use('/api/v1/sales-orders', salesOrderRoutes);
 app.use('/api/v1/numbering-settings', numberingSettings);
 app.use("/api/v1/tenant", tenantRoutes);
+app.use("/api/v1/credentials", credentialRoutes);
+app.use("/api/v1/tender-clients", tenderClientRoutes);
+
 
 // ==================== HEALTH ====================
 app.get("/health", (req, res) => {
@@ -266,12 +272,37 @@ app.get("/health", (req, res) => {
   });
 });
 
-// ==================== ROOT ====================
+// ==================== ROOT DASHBOARD ====================
 app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    message: "Enterprise Task Management API",
-    version: "1.0.0",
+  const isProd = process.env.NODE_ENV === "production";
+  const dbConnected = mongoose.connection.readyState === 1;
+  const uptimeSeconds = Math.floor(process.uptime());
+  const uptimeFormatted = `${Math.floor(uptimeSeconds / 3600)}h ${Math.floor((uptimeSeconds % 3600) / 60)}m ${uptimeSeconds % 60}s`;
+  const envMode = isProd ? "production" : "development";
+
+  const htmlPath = path.join(__dirname, "src", "views", "dashboard.html");
+
+  fs.readFile(htmlPath, "utf8", (err, html) => {
+    if (err) {
+      return res.status(500).send("Dashboard UI file missing.");
+    }
+
+    // Inject the values directly into the HTML
+    let finalHtml = html
+      .replace(/id="uptime">Uptime: Loading.../g, `id="uptime">Uptime: ${uptimeFormatted}`)
+      .replace(/id="env-mode">loading/g, `id="env-mode">${envMode}`)
+      .replace(/id="env-name">Development/g, `id="env-name">${envMode.charAt(0).toUpperCase() + envMode.slice(1)}`)
+      .replace(/id="env-badge">DEVELOPMENT/g, `id="env-badge">${envMode.toUpperCase()}`)
+      .replace(/id="server-time"><\/span>/g, `id="server-time">${new Date().toLocaleString()}</span>`)
+      .replace(/document.getElementById\('year'\).innerText = new Date\(\).getFullYear\(\);/g, `document.getElementById('year').innerText = ${new Date().getFullYear()};`);
+
+    if (!dbConnected) {
+       finalHtml = finalHtml
+         .replace(/<span class="status-dot" style="width: 6px; height: 6px; margin-right: 4px;"><\/span> Connected/g, `<span class="status-dot" style="width: 6px; height: 6px; margin-right: 4px; background: #f43f5e; box-shadow: none;"></span> Disconnected`)
+         .replace(/badge badge-green" id="db-status"/g, `badge badge-red" id="db-status"`);
+    }
+
+    res.send(finalHtml);
   });
 });
 

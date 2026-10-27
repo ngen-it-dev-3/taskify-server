@@ -37,6 +37,7 @@ router.post("/security", securityCtrl.createSecurity);
 router.patch("/security/:id", securityCtrl.updateSecurity);
 router.delete("/security/:id", securityCtrl.deleteSecurity);
 router.post("/security/:id/notify", securityCtrl.notifySecurity);
+router.post("/security/:id/pay", securityCtrl.recordPayment);
 
 router.get("/docs/list", docCtrl.listDocs);
 router.get("/docs/counts", docCtrl.docCounts);

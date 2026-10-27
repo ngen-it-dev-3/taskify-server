@@ -431,6 +431,38 @@ const userSchema = new mongoose.Schema(
         default: false,
       },
     },
+    // ============================================================
+    // CREDENTIAL ACCESS (NEW)
+    // ============================================================
+    hasCredentialAccess: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    credentialAccessGrantedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    credentialAccessGrantedAt: {
+      type: Date,
+      default: null,
+    },
+    // ============================================================
+    // CRM ACCESS RULES
+    // ============================================================
+    crmAccess: {
+      lists: {
+        served: { type: Boolean, default: true },
+        notAttended: { type: Boolean, default: true },
+        potential: { type: Boolean, default: true },
+      },
+      canSeePayments: { type: Boolean, default: false },
+      canSeeNotes: { type: Boolean, default: false },
+      canEdit: { type: Boolean, default: false },
+      scope: { type: String, enum: ["all", "assigned"], default: "all" },
+      assignedTo: { type: String, default: "" }, // If scope is "assigned"
+    },
 
     // ============================================================
     // TIMESTAMPS
