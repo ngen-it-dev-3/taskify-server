@@ -1,6 +1,7 @@
 // src/controllers/quotation/quotation.controller.js
 const { QuotationService } = require('../../services/quotation/quotation.service');
 const { ApiResponse } = require('../../utils/rfq/ApiResponse');
+const { quotationSourceUpload } = require('../../middleware/upload.middleware');
 
 const QuotationController = {
     async create(req, res, next) {
@@ -108,6 +109,40 @@ const QuotationController = {
             const data = await QuotationService.stats();
             res.json(ApiResponse.ok(data));
         } catch (err) { next(err); }
+    },
+
+    // ⭐ NEW: Handle document uploads for Quotation Sources
+    async uploadSourceDocs(req, res, next) {
+        // Use the Multer middleware inside the controller
+        const uploadMiddleware = quotationSourceUpload.array('files', 5);
+        
+        uploadMiddleware(req, res, (err) => {
+            if (err) {
+                return res.status(400).json({ success: false, message: err.message });
+            }
+
+            try {
+                if (!req.files || req.files.length === 0) {
+                    return res.status(400).json({ success: false, message: 'No files uploaded' });
+                }
+
+                // Construct the public URL for the files
+                const baseUrl = `${req.protocol}://${req.get('host')}`;
+                
+                const fileUrls = req.files.map((file) => {
+                    return `${baseUrl}/uploads/quotation-sources/${file.filename}`;
+                });
+
+                return res.status(200).json(
+                    ApiResponse.ok(
+                        { files: fileUrls },
+                        'Source documents uploaded successfully'
+                    )
+                );
+            } catch (error) {
+                next(error);
+            }
+        });
     },
 };
 

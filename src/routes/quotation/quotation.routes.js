@@ -9,27 +9,38 @@ const createSchema = {
   rfqId: { type: 'string', required: true },
 };
 
-const sendSchema = {};
 const outcomeSchema = {
   outcome: { type: 'string', required: true, enum: ['won', 'lost'] },
 };
+
+// ==========================================
+// 1. Specific Routes (Must go before /:id)
+// ==========================================
 
 // List + Create
 router.get('/', QuotationController.list);
 router.post('/', validateBody(createSchema), QuotationController.create);
 
-// Stats (before :id)
+// Stats
 router.get('/stats', QuotationController.stats);
 
-// By RFQ (before :id)
+// By RFQ
 router.get('/by-rfq/:rfqId', QuotationController.getByRfqId);
 
-// Single
+// ⭐ Document Upload for Sources
+router.post('/upload-source-docs', QuotationController.uploadSourceDocs);
+
+
+// ==========================================
+// 2. Dynamic ID Routes
+// ==========================================
+
+// Single Quotation
 router.get('/:id', QuotationController.getById);
 router.patch('/:id', QuotationController.update);
 router.delete('/:id', QuotationController.remove);
 
-// Actions
+// Quotation Actions
 router.post('/:id/send', QuotationController.send);
 router.post('/:id/approve', QuotationController.approve);
 router.post('/:id/mark-outcome', validateBody(outcomeSchema), QuotationController.markOutcome);

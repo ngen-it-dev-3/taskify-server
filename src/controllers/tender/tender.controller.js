@@ -1038,7 +1038,7 @@ const notifyFinance = async (req, res) => {
       ? new Date(tender.lastDateOfSubmission).toLocaleString("en-GB")
       : "—";
 
-    const CLIENT_URL = process.env.CLIENT_URL || "https://taskify-server-5gat.onrender.com";
+    const CLIENT_URL = process.env.CLIENT_URL || "https://orvix.ngengroup.org";
     const submissionUrl = `${CLIENT_URL}/tenders/submissions`;
 
     const subject = `[Tender] Banking docs pending — ${tender.tenderer}`;

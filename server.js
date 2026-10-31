@@ -126,6 +126,7 @@ const directories = [
   { path: path.join(uploadsPath, "backups"), name: "backups" },
   { path: path.join(uploadsPath, "channels"), name: "channels" },
   { path: path.join(uploadsPath, "tenders"), name: "tenders" },
+  { path: path.join(uploadsPath, "quotation-sources"), name: "quotation-sources" },
 ];
 
 for (const dir of directories) {

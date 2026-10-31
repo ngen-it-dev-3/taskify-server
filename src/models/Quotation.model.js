@@ -1,6 +1,24 @@
 // src/models/quotation/Quotation.model.js
 const mongoose = require('mongoose');
 
+// ⭐ Reusable sub-schema for sources
+const SourceItemSchema = new mongoose.Schema(
+  {
+    name: { type: String, default: '' },
+    price: { type: String, default: '' },
+    currency: { type: String, default: 'BDT' },
+    targetCurrency: { type: String, default: 'BDT' },
+    exchangeRate: { type: Number, default: 1 },
+    address: { type: String, default: '' },
+    email: { type: String, default: '' },
+    phone: { type: String, default: '' },
+    reference: { type: String, default: '' },
+    category: { type: String, enum: ['principle', 'reseller', ''], default: '' },
+    documents: { type: [String], default: [] },
+  },
+  { _id: false }
+);
+
 const LineItemSchema = new mongoose.Schema(
   {
     id: { type: String, required: true },
@@ -12,18 +30,11 @@ const LineItemSchema = new mongoose.Schema(
     discountPct: { type: Number, default: 0 },
     type: { type: String, enum: ['item', 'fixed'], default: 'item' },
     spec: { type: String, default: '' },
-    source1: {
-      name: { type: String, default: '' },
-      price: { type: String, default: '' },
-    },
-    source2: {
-      name: { type: String, default: '' },
-      price: { type: String, default: '' },
-    },
-    source3: {
-      name: { type: String, default: '' },
-      price: { type: String, default: '' },
-    },
+
+    // ⭐ Updated to use the sub-schema with default fallbacks
+    source1: { type: SourceItemSchema, default: () => ({}) },
+    source2: { type: SourceItemSchema, default: () => ({}) },
+    source3: { type: SourceItemSchema, default: () => ({}) },
   },
   { _id: false }
 );
@@ -76,7 +87,7 @@ const QuotationSchema = new mongoose.Schema(
   {
     // ---- Core identification ----
     pqNumber: { type: String, required: true, unique: true, index: true },
-    quotationNumber: { type: String, default: '' }, 
+    quotationNumber: { type: String, default: '' },
     status: {
       type: String,
       enum: ['draft', 'awaiting_approval', 'sent', 'won', 'lost', 'expired'],
@@ -108,16 +119,16 @@ const QuotationSchema = new mongoose.Schema(
     discountEnabled: { type: Boolean, default: true },
     pqrNumber: { type: String, default: '' },
 
-    // ⭐ NEW — editable Bill To / Quote Details fields
-    billToCompany:     { type: String, default: '' },
+    // ---- Bill To / Quote Details fields ----
+    billToCompany: { type: String, default: '' },
     billToContactName: { type: String, default: '' },
     billToContactRole: { type: String, default: '' },
-    billToEmail:       { type: String, default: '' },
-    billToPhone:       { type: String, default: '' },
-    billToAddress:     { type: String, default: '' },
-    pqDate:            { type: String, default: '' },
-    rfqRefOverride:    { type: String, default: '' },
-    
+    billToEmail: { type: String, default: '' },
+    billToPhone: { type: String, default: '' },
+    billToAddress: { type: String, default: '' },
+    pqDate: { type: String, default: '' },
+    rfqRefOverride: { type: String, default: '' },
+
     // ---- Content ----
     lines: { type: [LineItemSchema], default: [] },
     rates: { type: RatesSchema, default: () => ({}) },

@@ -6,7 +6,7 @@ const crypto = require("crypto");
 
 // ============================================================
 // UPLOAD DIRECTORIES
-//
+// ============================================================
 // __dirname = backend/src/middleware
 //   ../../  = backend               ← the backend root
 // Both this file and server.js must point to the SAME folder:
@@ -43,6 +43,13 @@ const companyDocUploadDir = path.join(
 );
 fs.mkdirSync(companyDocUploadDir, { recursive: true });
 
+// ⭐ ---------- Quotation Source doc uploads (NEW) ----------
+const quotationSourceUploadDir = path.join(
+  __dirname,
+  "../../uploads/quotation-sources",
+);
+fs.mkdirSync(quotationSourceUploadDir, { recursive: true });
+
 // ---------- Boot logs ----------
 console.log("[upload.middleware] uploadDir              :", uploadDir);
 console.log("[upload.middleware] tenderUploadDir        :", tenderUploadDir);
@@ -53,6 +60,10 @@ console.log(
 console.log(
   "[upload.middleware] companyDocUploadDir    :",
   companyDocUploadDir,
+);
+console.log(
+  "[upload.middleware] quotationSourceUploadDir:",
+  quotationSourceUploadDir,
 );
 
 // ============================================================
@@ -154,6 +165,26 @@ const companyDocStorage = multer.diskStorage({
   },
 });
 
+// ⭐ ============================================================
+// STORAGE — QUOTATION SOURCES (NEW)
+// ============================================================
+const quotationSourceStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(quotationSourceUploadDir, { recursive: true });
+    cb(null, quotationSourceUploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const id = crypto.randomBytes(8).toString("hex");
+    const ext = path.extname(file.originalname) || "";
+    const base =
+      path
+        .basename(file.originalname, ext)
+        .replace(/[^\w.\-]+/g, "_")
+        .slice(0, 60) || "file";
+    cb(null, `${Date.now()}-${id}-${base}${ext}`);
+  },
+});
+
 // ============================================================
 // MULTER INSTANCES
 // ============================================================
@@ -185,6 +216,13 @@ const companyDocUpload = multer({
 const tenderChatUpload = multer({
   storage: chatStorage,
   limits: { fileSize: 25 * 1024 * 1024, files: 10 },
+  fileFilter,
+});
+
+// ⭐ Quotation Source Upload Instance (NEW)
+const quotationSourceUpload = multer({
+  storage: quotationSourceStorage,
+  limits: { fileSize: 15 * 1024 * 1024, files: 5 }, // 15MB, max 5 files per source
   fileFilter,
 });
 
@@ -275,6 +313,10 @@ module.exports = {
   // Tender chat (support)
   tenderChatUpload,
   tenderChatUploadDir,
+
+  // ⭐ Quotation Sources (NEW)
+  quotationSourceUpload,
+  quotationSourceUploadDir,
 
   // Utilities
   getFileType,
