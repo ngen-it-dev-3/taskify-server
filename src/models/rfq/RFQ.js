@@ -58,6 +58,9 @@ const RFQSchema = new mongoose.Schema(
         },
         salesman: { type: String, default: 'Unassigned', index: true },
         assignedTo: { type: String, default: 'Unassigned' },
+        territory: { type: String, default: '' },
+        currency: { type: String, default: 'BDT' },
+        exchangeRate: { type: Number, default: 1 },
         receivedVia: {
             type: String,
             enum: ['Email', 'Phone', 'WhatsApp', 'In-Person', 'Other'],

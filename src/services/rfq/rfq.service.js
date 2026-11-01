@@ -61,6 +61,9 @@ function toClientShape(doc) {
     source: d.source,
     salesman: d.salesman,
     assignedTo: d.assignedTo,
+    territory: d.territory || '',
+    currency: d.currency || 'BDT',
+    exchangeRate: d.exchangeRate || 1,
     clientInfo: {
       contactName: d.contactName,
       email: d.email,
@@ -261,17 +264,27 @@ const RFQService = {
     return toClientShape(doc);
   },
 
-  // ---------- ASSIGN (with emails) ----------
+    // ---------- ASSIGN (with emails) ----------
   async assign(id, dto, userId) {
+    // ⭐ DEBUG: Look at your backend terminal to see if it receives "Qatar"
+    console.log("🔥 BACKEND RECEIVED PAYLOAD:", dto);
+
     const doc = await RFQ.findById(id);
     if (!doc) throw ApiError.notFound('RFQ not found');
 
     const previousAssignee = doc.assignedTo;
     const assignerName = dto.assignedBy || 'CRM Admin';
 
+    // ⭐ Update fields
     doc.assignedTo = dto.assignedTo;
     doc.salesman = dto.assignedTo;
     if (dto.priority) doc.priority = dto.priority;
+    
+    // ⭐ TERRITORY: Use explicit assignment
+    if (dto.territory) {
+      doc.territory = dto.territory;
+      doc.markModified('territory'); // Forces Mongoose to see the change
+    }
 
     doc.assignmentHistory.push({
       assignedTo: dto.assignedTo,
@@ -281,7 +294,12 @@ const RFQService = {
     });
 
     doc.updatedBy = userId;
+    
+    // ⭐ Save to DB
     await doc.save();
+    
+    // ⭐ DEBUG: Look at your backend terminal to see if it saved
+    console.log("🔥 BACKEND SAVED TERRITORY:", doc.territory);
 
     const rfqPlain = doc.toObject();
 

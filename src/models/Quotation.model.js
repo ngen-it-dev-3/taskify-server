@@ -9,6 +9,7 @@ const SourceItemSchema = new mongoose.Schema(
     currency: { type: String, default: 'BDT' },
     targetCurrency: { type: String, default: 'BDT' },
     exchangeRate: { type: Number, default: 1 },
+    manualRate: { type: Number, default: null }, // ⭐ ADDED: So the synced rate is saved!
     address: { type: String, default: '' },
     email: { type: String, default: '' },
     phone: { type: String, default: '' },
@@ -96,6 +97,9 @@ const QuotationSchema = new mongoose.Schema(
     },
     stage: { type: String, default: 'Negotiation' },
 
+    // ⭐ ADDED: So the custom title (e.g., Samsung — Turkey) is saved!
+    title: { type: String, default: '' }, 
+
     // ---- RFQ link ----
     rfqId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -112,7 +116,7 @@ const QuotationSchema = new mongoose.Schema(
     // ---- Commercial ----
     territory: { type: String, default: '' },
     crmManager: { type: String, default: '' },
-    currency: { type: String, default: 'BDT (base)' },
+    currency: { type: String, default: 'BDT' }, // ⭐ REMOVED "(base)" so it maps cleanly to "TRY" or "VND"
     currencySymbol: { type: String, default: '৳' },
     exchangeRate: { type: Number, default: 1 },
     vatEnabled: { type: Boolean, default: true },
