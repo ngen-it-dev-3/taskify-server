@@ -18,7 +18,7 @@ function formatDisplayName(name) {
   if (lower === 'quotation-builder' || lower === 'quotation builder') return 'Quotations';
   if (lower === 'tender') return 'Tenders';
   if (lower === 'rfq') return 'RFQs';
-  
+
   // Capitalize and remove dashes for any other string
   return String(name).charAt(0).toUpperCase() + String(name).slice(1).replace(/-/g, ' ');
 }
@@ -282,7 +282,7 @@ const RFQService = {
     doc.assignedTo = dto.assignedTo;
     doc.salesman = dto.assignedTo;
     if (dto.priority) doc.priority = dto.priority;
-    
+
     if (dto.territory) {
       doc.territory = dto.territory;
       doc.markModified('territory');
@@ -297,7 +297,7 @@ const RFQService = {
 
     doc.updatedBy = userId;
     await doc.save();
-    
+
     const rfqPlain = doc.toObject();
 
     resolveRepEmail(dto.assignedTo).then((repEmail) => {
@@ -337,6 +337,26 @@ const RFQService = {
     const doc = await RFQ.findById(id);
     if (!doc) throw ApiError.notFound('RFQ not found');
 
+    // ⭐ 1. Update Company & Contact Info
+    if (dto.company) doc.company = dto.company;
+    if (dto.country) doc.country = dto.country;
+    if (dto.contactName) doc.contactName = dto.contactName;
+    if (dto.email) doc.email = dto.email;
+    if (dto.phone) doc.phone = dto.phone;
+    if (dto.designation) doc.designation = dto.designation;
+    if (dto.address) doc.address = dto.address;
+    if (dto.city) doc.city = dto.city;
+    if (dto.zipCode) doc.zipCode = dto.zipCode;
+    if (dto.isReseller !== undefined) doc.isReseller = dto.isReseller;
+
+    // ⭐ 2. Update Additional Details
+    if (dto.projectName !== undefined) doc.projectName = dto.projectName;
+    if (dto.tentativeBudget !== undefined) doc.tentativeBudget = dto.tentativeBudget;
+    if (dto.currentProjectStatus !== undefined) doc.currentProjectStatus = dto.currentProjectStatus;
+    if (dto.tentativePurchaseDate !== undefined) doc.tentativePurchaseDate = dto.tentativePurchaseDate;
+    if (dto.comment !== undefined) doc.comment = dto.comment;
+
+    // ⭐ 3. Update Status & Assignment
     if (dto.stage) doc.stage = dto.stage;
     if (dto.priority) doc.priority = dto.priority;
     if (dto.assignedTo) {
@@ -344,13 +364,15 @@ const RFQService = {
       doc.salesman = dto.assignedTo;
     }
     if (dto.salesman) doc.salesman = dto.salesman;
-    if (dto.comment !== undefined) doc.comment = dto.comment;
-    if (dto.products) {
+
+    // ⭐ 4. Update Products
+    if (dto.products && Array.isArray(dto.products)) {
       doc.products = dto.products.map((p, i) => ({ ...p, sl: p.sl || i + 1 }));
     }
 
     doc.updatedBy = userId;
     await doc.save();
+
     return toClientShape(doc);
   },
 
@@ -404,20 +426,20 @@ const RFQService = {
       RFQ.countDocuments({ stage: 'lost' }),
       RFQ.countDocuments({ createdAt: { $gte: startOfThisMonth } }),
       RFQ.countDocuments({ createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth } }),
-      
+
       // ⭐ Using formatDisplayName so the frontend NEVER sees raw slugs
       RFQ.aggregate([
         { $group: { _id: '$country', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 10 },
       ]),
-      
+
       RFQ.aggregate([
         { $group: { _id: '$salesman', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 10 },
       ]),
-      
+
       RFQ.find({})
         .sort({ createdAt: -1 })
         .limit(5)
@@ -443,19 +465,19 @@ const RFQService = {
       lastMonth,
       momDelta,
       quoteRate,
-      
+
       // ⭐ Apply formatting to the aggregated results
       byCountry: byCountry.map((c) => ({
         country: formatDisplayName(c._id),
         count: c.count,
         pct: Math.round((c.count / total) * 100),
       })),
-      
+
       bySalesman: bySalesman.map((s) => ({
         salesman: formatDisplayName(s._id),
         count: s.count,
       })),
-      
+
       recent,
     };
   },

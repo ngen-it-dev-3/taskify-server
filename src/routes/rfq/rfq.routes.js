@@ -1,3 +1,4 @@
+// src/routes/rfq/rfq.routes.js
 const express = require('express');
 const router = express.Router();
 
@@ -31,9 +32,38 @@ const assignSchema = {
   priority: { enum: ['low', 'normal', 'high', 'urgent'] },
 };
 
+// ⭐ UPDATED: Now allows all fields sent from the Edit Form
 const updateSchema = {
+  // Company & Contact Info
+  company: { type: 'string', max: 200 },
+  country: { type: 'string' },
+  contactName: { type: 'string' },
+  email: { type: 'string', email: true },
+  phone: { type: 'string' },
+  designation: { type: 'string' },
+  address: { type: 'string' },
+  city: { type: 'string' },
+  zipCode: { type: 'string' },
+  isReseller: { type: 'boolean' },
+  
+  // Nested Info (if you keep clientInfo)
+  clientInfo: { type: 'object' },
+  
+  // Additional Details
+  projectName: { type: 'string' },
+  tentativeBudget: { type: 'string' },
+  currentProjectStatus: { type: 'string' },
+  tentativePurchaseDate: { type: 'string' },
+  comment: { type: 'string' },
+  
+  // Products
+  products: { type: 'array' },
+  
+  // Existing Actions
   stage: { enum: ['pending', 'quoted', 'archived', 'lost'] },
   priority: { enum: ['low', 'normal', 'high', 'urgent'] },
+  assignedTo: { type: 'string' },
+  salesman: { type: 'string' },
 };
 
 // ============================================================
