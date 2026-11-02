@@ -31,6 +31,11 @@ const ForecastEntrySchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
+    industry: {
+      type: String,
+      default: 'Technology', // Defaulting so it's never "Unknown"
+      index: true,
+    },
     item: {
       type: String,
       default: '',
@@ -119,9 +124,9 @@ const ForecastEntrySchema = new mongoose.Schema(
 
     // ---- Sales Report lifecycle (Screenshot 5) ----
     deliveredAt: { type: Date, default: null },
-    invoicedAt:  { type: Date, default: null },
-    executedAt:  { type: Date, default: null },
-    closedAt:    { type: Date, default: null },
+    invoicedAt: { type: Date, default: null },
+    executedAt: { type: Date, default: null },
+    closedAt: { type: Date, default: null },
 
     // ---- Target vs Achieved (Sales Report per month) ----
     monthlyTarget: {

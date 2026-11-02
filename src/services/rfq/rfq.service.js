@@ -10,6 +10,20 @@ const {
 } = require('./rfq.email.templates');
 
 // ============================================================
+// ⭐ HELPER: Format raw DB slugs into clean labels
+// ============================================================
+function formatDisplayName(name) {
+  if (!name) return 'Unknown';
+  const lower = String(name).toLowerCase();
+  if (lower === 'quotation-builder' || lower === 'quotation builder') return 'Quotations';
+  if (lower === 'tender') return 'Tenders';
+  if (lower === 'rfq') return 'RFQs';
+  
+  // Capitalize and remove dashes for any other string
+  return String(name).charAt(0).toUpperCase() + String(name).slice(1).replace(/-/g, ' ');
+}
+
+// ============================================================
 // EMAIL SENDER — wraps sendMail with logging + safe-fail
 // ============================================================
 async function sendMailSafe(opts) {
@@ -148,14 +162,8 @@ async function generateRfqNumber(date = new Date()) {
 // ============================================================
 function getMonthBoundaries(referenceDate = new Date()) {
   const now = referenceDate;
-
-  // Start of this month (local time)
   const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-
-  // Start of last month
   const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
-
-  // End of last month (last day, 23:59:59)
   const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
   return { startOfThisMonth, startOfLastMonth, endOfLastMonth };
@@ -221,7 +229,6 @@ const RFQService = {
 
     await doc.save();
 
-    // ⭐ Auto-capture to Client 360
     try {
       const { Client360Service } = require('../client360/client360.service');
       await Client360Service.autoCaptureFromRfq(doc, userId);
@@ -264,26 +271,21 @@ const RFQService = {
     return toClientShape(doc);
   },
 
-    // ---------- ASSIGN (with emails) ----------
+  // ---------- ASSIGN ----------
   async assign(id, dto, userId) {
-    // ⭐ DEBUG: Look at your backend terminal to see if it receives "Qatar"
-    console.log("🔥 BACKEND RECEIVED PAYLOAD:", dto);
-
     const doc = await RFQ.findById(id);
     if (!doc) throw ApiError.notFound('RFQ not found');
 
     const previousAssignee = doc.assignedTo;
     const assignerName = dto.assignedBy || 'CRM Admin';
 
-    // ⭐ Update fields
     doc.assignedTo = dto.assignedTo;
     doc.salesman = dto.assignedTo;
     if (dto.priority) doc.priority = dto.priority;
     
-    // ⭐ TERRITORY: Use explicit assignment
     if (dto.territory) {
       doc.territory = dto.territory;
-      doc.markModified('territory'); // Forces Mongoose to see the change
+      doc.markModified('territory');
     }
 
     doc.assignmentHistory.push({
@@ -294,13 +296,8 @@ const RFQService = {
     });
 
     doc.updatedBy = userId;
-    
-    // ⭐ Save to DB
     await doc.save();
     
-    // ⭐ DEBUG: Look at your backend terminal to see if it saved
-    console.log("🔥 BACKEND SAVED TERRITORY:", doc.territory);
-
     const rfqPlain = doc.toObject();
 
     resolveRepEmail(dto.assignedTo).then((repEmail) => {
@@ -385,7 +382,6 @@ const RFQService = {
 
   // ---------- DASHBOARD STATS ----------
   async stats() {
-    // ⭐ Compute month boundaries
     const { startOfThisMonth, startOfLastMonth, endOfLastMonth } =
       getMonthBoundaries();
 
@@ -395,8 +391,8 @@ const RFQService = {
       quoted,
       archived,
       lost,
-      thisMonth,     // ⭐ NEW
-      lastMonth,     // ⭐ NEW
+      thisMonth,
+      lastMonth,
       byCountry,
       bySalesman,
       recent,
@@ -406,24 +402,22 @@ const RFQService = {
       RFQ.countDocuments({ stage: 'quoted' }),
       RFQ.countDocuments({ stage: 'archived' }),
       RFQ.countDocuments({ stage: 'lost' }),
-      // ⭐ Count RFQs created this month
-      RFQ.countDocuments({
-        createdAt: { $gte: startOfThisMonth },
-      }),
-      // ⭐ Count RFQs created last month
-      RFQ.countDocuments({
-        createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth },
-      }),
+      RFQ.countDocuments({ createdAt: { $gte: startOfThisMonth } }),
+      RFQ.countDocuments({ createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth } }),
+      
+      // ⭐ Using formatDisplayName so the frontend NEVER sees raw slugs
       RFQ.aggregate([
         { $group: { _id: '$country', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 10 },
       ]),
+      
       RFQ.aggregate([
         { $group: { _id: '$salesman', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 10 },
       ]),
+      
       RFQ.find({})
         .sort({ createdAt: -1 })
         .limit(5)
@@ -432,12 +426,11 @@ const RFQService = {
 
     const quoteRate = total > 0 ? Math.round((quoted / total) * 100) : 0;
 
-    // ⭐ Month-over-month delta
     let momDelta = 0;
     if (lastMonth > 0) {
       momDelta = Math.round(((thisMonth - lastMonth) / lastMonth) * 100);
     } else if (thisMonth > 0) {
-      momDelta = 100; // growth from zero
+      momDelta = 100;
     }
 
     return {
@@ -446,24 +439,28 @@ const RFQService = {
       quoted,
       archived,
       lost,
-      thisMonth,      // ⭐ NEW
-      lastMonth,      // ⭐ NEW
-      momDelta,       // ⭐ NEW
+      thisMonth,
+      lastMonth,
+      momDelta,
       quoteRate,
+      
+      // ⭐ Apply formatting to the aggregated results
       byCountry: byCountry.map((c) => ({
-        country: c._id,
+        country: formatDisplayName(c._id),
         count: c.count,
         pct: Math.round((c.count / total) * 100),
       })),
+      
       bySalesman: bySalesman.map((s) => ({
-        salesman: s._id,
+        salesman: formatDisplayName(s._id),
         count: s.count,
       })),
+      
       recent,
     };
   },
 
-  // ---------- SYNC (stub) ----------
+  // ---------- SYNC ----------
   async syncFromWebPortal() {
     return { synced: 0, message: 'Sync endpoint not yet configured.' };
   },

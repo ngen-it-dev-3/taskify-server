@@ -11,7 +11,6 @@ const {
 // ============================================================
 // OWNER HELPERS
 // ============================================================
-
 function extractOwnerName(v) {
     if (!v) return '';
     if (typeof v === 'string') return v.trim();
@@ -21,28 +20,15 @@ function extractOwnerName(v) {
     return '';
 }
 
-/**
- * ⭐ Resolve an owner field which might be:
- *   - a plain string             → return it
- *   - a populated user object    → extract name
- *   - an ObjectId (or {_id})     → fetch user, extract name
- */
 async function resolveOwnerField(v) {
     if (!v) return '';
-
-    // Plain string
     if (typeof v === 'string') return v.trim();
-
-    // Populated user object
     if (typeof v === 'object' && (v.fullName || v.name || v.email)) {
         return extractOwnerName(v);
     }
-
-    // ObjectId — try to fetch
     if (typeof v === 'object') {
         const id = v._id || v;
         const idStr = id && typeof id.toString === 'function' ? id.toString() : '';
-
         if (/^[a-f\d]{24}$/i.test(idStr)) {
             try {
                 const user = await User.findById(id)
@@ -54,7 +40,6 @@ async function resolveOwnerField(v) {
             }
         }
     }
-
     return '';
 }
 
@@ -67,6 +52,7 @@ function toClientShape(doc) {
     return {
         id: d._id.toString(),
         client: d.client,
+        industry: d.industry || 'Technology', // ⭐ Include industry
         item: d.item,
         value: d.value,
         probability: d.probability,
@@ -141,6 +127,7 @@ const SalesCrmService = {
 
         const doc = new ForecastEntry({
             client: String(dto.client).trim(),
+            industry: dto.industry || 'Technology', // ⭐ Save industry
             item: dto.item || '',
             value: Number(dto.value) || 0,
             probability:
@@ -204,7 +191,7 @@ const SalesCrmService = {
         const previousStage = doc.stage;
 
         const patchable = [
-            'client', 'item', 'value', 'probability', 'month', 'stage',
+            'client', 'industry', 'item', 'value', 'probability', 'month', 'stage',
             'source', 'note', 'country', 'region', 'owner',
             'deliveredAt', 'invoicedAt', 'executedAt', 'closedAt', 'monthlyTarget',
         ];
@@ -212,11 +199,10 @@ const SalesCrmService = {
         for (const key of patchable) {
             if (dto[key] !== undefined) doc[key] = dto[key];
         }
-        // ... probability clamp ...
+        
         doc.updatedBy = userId?._id || userId || null;
         await doc.save();
 
-        // ⭐ NEW: if stage changed TO 'won', create Sales Order
         if (doc.stage === 'won' && previousStage !== 'won') {
             try {
                 const { SalesOrderService } = require('../salesOrder/salesOrder.service');
@@ -384,6 +370,8 @@ const SalesCrmService = {
             else if (by === 'stage') key = r.stage || 'Unknown';
             else if (by === 'source') key = r.source || 'Unknown';
             else if (by === 'owner') key = extractOwnerName(r.owner) || 'Unassigned';
+            // ⭐ ADDED: Handle Industry breakdown
+            else if (by === 'industry') key = r.industry || 'Technology';
 
             if (!buckets[key]) buckets[key] = 0;
             buckets[key] += r.value || 0;
@@ -400,9 +388,7 @@ const SalesCrmService = {
         return { total, by, entries };
     },
 
-    // ---------- BY SALESPERSON (leaderboard) ----------
     async getBySalesperson(q = {}) {
-        // ⭐ month + other filters flow through via buildFilter
         const filter = buildFilter(q);
         const rows = await ForecastEntry.find(filter).lean();
 
@@ -419,18 +405,15 @@ const SalesCrmService = {
             if (!map[owner]) {
                 map[owner] = {
                     name: owner,
-                    // totals
-                    total: 0,          // all value
-                    wonValue: 0,       // value of won entries
-                    openValue: 0,      // value of open (query/rfq/quotation/negotiation)
-                    lostValue: 0,      // value of lost entries
-                    weighted: 0,       // probability-adjusted
-                    // counts
-                    count: 0,          // all entries
+                    total: 0,
+                    wonValue: 0,
+                    openValue: 0,
+                    lostValue: 0,
+                    weighted: 0,
+                    count: 0,
                     wonCount: 0,
                     lostCount: 0,
                     openCount: 0,
-                    // derived
                     winRate: 0,
                     avgDealSize: 0,
                     entries: [],
@@ -454,7 +437,6 @@ const SalesCrmService = {
                 bucket.lostCount += 1;
                 grandLost += val;
             } else {
-                // query | rfq | quotation | negotiation
                 bucket.openValue += val;
                 bucket.openCount += 1;
                 grandOpen += val;
@@ -475,7 +457,6 @@ const SalesCrmService = {
             grandCount += 1;
         }
 
-        // Finalize derived fields per person
         const people = Object.values(map).map((p) => {
             const decided = p.wonCount + p.lostCount;
             const winRate = decided > 0 ? Math.round((p.wonCount / decided) * 100) : 0;
@@ -483,7 +464,6 @@ const SalesCrmService = {
             return { ...p, winRate, avgDealSize };
         });
 
-        // Sort by won value desc, then open value desc, then total
         people.sort((a, b) => {
             if (b.wonValue !== a.wonValue) return b.wonValue - a.wonValue;
             if (b.openValue !== a.openValue) return b.openValue - a.openValue;
@@ -506,9 +486,7 @@ const SalesCrmService = {
         };
     },
 
-    // ---------- SALES REPORT (FY26 target vs achieved) ----------
     async getSalesReport(q = {}) {
-        // ⭐ Force stage = 'won' — Sales Report is a WON-only report
         const filter = buildFilter({ ...q, month: undefined, stage: 'won' });
 
         const rows = await ForecastEntry.find(filter).lean();
@@ -559,14 +537,9 @@ const SalesCrmService = {
         };
     },
 
-
-    // ============================================================
-    // AUTO-PUSH WON TENDER TO FORECAST
-    // ============================================================
     async pushFromTender({ tender, userId, userName }) {
         if (!tender) throw ApiError.badRequest('Tender required');
 
-        // Idempotency — skip if already pushed
         const existing = await ForecastEntry.findOne({
             $or: [
                 { source: 'tender', note: { $regex: new RegExp(String(tender._id), 'i') } },
@@ -577,7 +550,6 @@ const SalesCrmService = {
             return toClientShape(existing);
         }
 
-        // Resolve owner name
         const resolvedOwner =
             extractOwnerName(tender.owner) ||
             extractOwnerName(tender.responsiblePerson) ||
@@ -586,7 +558,6 @@ const SalesCrmService = {
             (await resolveOwnerField(userId)) ||
             '';
 
-        // Bucket by the won date
         const wonAt = tender.wonAt || tender.updatedAt || new Date();
         const monthLabel = MONTHS[new Date(wonAt).getMonth()];
 
@@ -609,7 +580,6 @@ const SalesCrmService = {
 
         await doc.save();
 
-        // ⭐ Auto-capture to Client 360
         try {
             const { Client360Service } = require('../client360/client360.service');
             await Client360Service.autoCaptureFromForecast(doc, userId);
@@ -618,15 +588,12 @@ const SalesCrmService = {
         }
 
         console.log(
-            `📈 Forecast entry created for ${quotation.pqNumber} (৳${doc.value.toLocaleString()}) — owner: "${resolvedOwner || '(blank)'}"`
+            `📈 Forecast entry created for ${doc.pqNumber} (৳${doc.value.toLocaleString()}) — owner: "${resolvedOwner || '(blank)'}"`
         );
 
         return toClientShape(doc);
     },
 
-    // ============================================================
-    // AUTO-PUSH FROM QUOTATION BUILDER
-    // ============================================================
     async pushFromQuotation({ quotation, rfq, userId, userName }) {
         if (!quotation) throw ApiError.badRequest('Quotation required');
 
@@ -644,7 +611,6 @@ const SalesCrmService = {
         };
         const probability = stageProbMap['quotation'] || 60;
 
-        // ⭐ Resolve owner with maximum fallbacks
         const resolvedOwner =
             (await resolveOwnerField(quotation.crmManager)) ||
             (await resolveOwnerField(quotation.createdBy)) ||
@@ -652,7 +618,7 @@ const SalesCrmService = {
             extractOwnerName(quotation.assignedTo) ||
             (await resolveOwnerField(rfq?.assignedTo)) ||
             extractOwnerName(rfq?.salesman) ||
-            (userName && String(userName).trim()) ||      // ⭐ auth user name
+            (userName && String(userName).trim()) ||
             (await resolveOwnerField(userId)) ||
             '';
 
@@ -669,7 +635,6 @@ const SalesCrmService = {
             country: quotation.client?.country || rfq?.country || 'Bangladesh',
             region: quotation.client?.country || rfq?.country || 'Bangladesh',
             owner: resolvedOwner,
-            // Quotation and RFQ references for traceability
             quotationId: quotation._id,
             rfqId: rfq?._id || quotation.rfqId,
             rfqNumber: quotation.rfqNumber || rfq?.rfqNumber || '',
