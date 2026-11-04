@@ -33,8 +33,7 @@ const Client360Controller = {
     },
 
     // ============================================================
-    // STATS — "All Clients" KPI cards
-    // GET /api/v1/clients/stats
+    // STATS
     // ============================================================
     async getStats(req, res, next) {
         try {
@@ -44,8 +43,7 @@ const Client360Controller = {
     },
 
     // ============================================================
-    // SECTOR BREAKDOWN — sector tabs
-    // GET /api/v1/clients/sector-breakdown
+    // SECTOR BREAKDOWN
     // ============================================================
     async getSectorBreakdown(req, res, next) {
         try {
@@ -56,7 +54,6 @@ const Client360Controller = {
 
     // ============================================================
     // CREATE (manual)
-    // POST /api/v1/clients
     // ============================================================
     async createManual(req, res, next) {
         try {
@@ -67,8 +64,7 @@ const Client360Controller = {
     },
 
     // ============================================================
-    // UPDATE
-    // PATCH /api/v1/clients/:id
+    // UPDATE CLIENT
     // ============================================================
     async updateClient(req, res, next) {
         try {
@@ -79,8 +75,7 @@ const Client360Controller = {
     },
 
     // ============================================================
-    // DELETE
-    // DELETE /api/v1/clients/:id
+    // DELETE CLIENT
     // ============================================================
     async deleteClient(req, res, next) {
         try {
@@ -140,9 +135,43 @@ const Client360Controller = {
         } catch (err) { next(err); }
     },
 
+    // ⭐ NEW: UPDATE COMMUNICATION
+    async updateCommunication(req, res, next) {
+        try {
+            const userId = req.user?._id || req.user?.id;
+            const { id, logId } = req.params;
+
+            // Assuming you have an updateCommunication method in your service
+            const data = await Client360Service.updateCommunication(
+                id,
+                logId,
+                req.body,
+                userId
+            );
+
+            res.json(ApiResponse.ok(data, 'Communication updated'));
+        } catch (err) { next(err); }
+    },
+
+    // ⭐ NEW: DELETE COMMUNICATION
+    async deleteCommunication(req, res, next) {
+        try {
+            const userId = req.user?._id || req.user?.id;
+            const { id, logId } = req.params;
+
+            // Assuming you have a deleteCommunication method in your service
+            const data = await Client360Service.deleteCommunication(
+                id,
+                logId,
+                userId
+            );
+
+            res.json(ApiResponse.ok(data, 'Communication deleted'));
+        } catch (err) { next(err); }
+    },
+
     // ============================================================
     // CONSTANTS
-    // GET /api/v1/clients/constants
     // ============================================================
     async getConstants(req, res, next) {
         try {
@@ -150,13 +179,86 @@ const Client360Controller = {
             res.json(ApiResponse.ok(data));
         } catch (err) { next(err); }
     },
+
     async getClientQuotations(req, res, next) {
         try {
             const data = await Client360Service.getClientQuotations(req.params.id);
             res.json(ApiResponse.ok(data));
         } catch (err) { next(err); }
     },
-};
+    // ============================================================
+    // QUOTES & CONTRACTS (⭐ নতুন যোগ করা হলো)
+    // ============================================================
+    async addQuote(req, res, next) {
+        try {
+            const userId = req.user?._id || req.user?.id;
+            const data = await Client360Service.addQuote(req.params.id, req.body, userId);
+            res.status(201).json(ApiResponse.created(data, 'Quote added'));
+        } catch (err) { next(err); }
+    },
 
+    async updateQuote(req, res, next) {
+        try {
+            const userId = req.user?._id || req.user?.id;
+            const data = await Client360Service.updateQuote(
+                req.params.id,
+                req.params.quoteId,
+                req.body,
+                userId
+            );
+            res.json(ApiResponse.ok(data, 'Quote updated'));
+        } catch (err) { next(err); }
+    },
+
+    async addContract(req, res, next) {
+        try {
+            const userId = req.user?._id || req.user?.id;
+            const data = await Client360Service.addContract(req.params.id, req.body, userId);
+            res.status(201).json(ApiResponse.created(data, 'Contract added'));
+        } catch (err) { next(err); }
+    },
+
+    async updateContract(req, res, next) {
+        try {
+            const userId = req.user?._id || req.user?.id;
+            const data = await Client360Service.updateContract(
+                req.params.id,
+                req.params.contractId,
+                req.body,
+                userId
+            );
+            res.json(ApiResponse.ok(data, 'Contract updated'));
+        } catch (err) { next(err); }
+    },
+    // ============================================================
+    // DELETE QUOTE
+    // ============================================================
+    async deleteQuote(req, res, next) {
+        try {
+            const userId = req.user?._id || req.user?.id;
+            const data = await Client360Service.deleteQuote(
+                req.params.id,
+                req.params.quoteId,
+                userId
+            );
+            res.json(ApiResponse.ok(data, 'Quote deleted'));
+        } catch (err) { next(err); }
+    },
+
+    // ============================================================
+    // DELETE CONTRACT
+    // ============================================================
+    async deleteContract(req, res, next) {
+        try {
+            const userId = req.user?._id || req.user?.id;
+            const data = await Client360Service.deleteContract(
+                req.params.id,
+                req.params.contractId,
+                userId
+            );
+            res.json(ApiResponse.ok(data, 'Contract deleted'));
+        } catch (err) { next(err); }
+    },
+};
 
 module.exports = { Client360Controller };

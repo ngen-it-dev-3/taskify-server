@@ -116,11 +116,6 @@ function fmtClient(doc) {
     };
 }
 
-/**
- * ⭐ Lean formatter — used by listClients for smaller payloads.
- *    Omits heavy fields (full visitLog, communicationLog, quotes, contracts)
- *    that the All Clients table doesn't render.
- */
 function fmtClientLean(doc) {
     const d = doc.toObject ? doc.toObject() : doc;
 
@@ -145,7 +140,6 @@ function fmtClientLean(doc) {
         autoAdded: d.autoAdded,
         autoAddedFrom: d.autoAddedFrom,
 
-        // ⭐ Contacts are needed for the expanded sub-table
         contacts: (d.contacts || []).map((c) => ({
             _id: c._id?.toString(),
             name: c.name,
@@ -161,7 +155,6 @@ function fmtClientLean(doc) {
             linkedIn: c.linkedIn,
         })),
 
-        // ⭐ Minimal stubs for arrays so lengths still work if needed
         quotes: [],
         contracts: [],
         communicationLog: [],
@@ -332,10 +325,7 @@ async function upsertClientFromSource({
 // ============================================================
 const Client360Service = {
     // ============================================================
-    // LIST — ⭐ OPTIMIZED
-    //   - No .populate() → 1 query instead of N
-    //   - .select() with only needed fields
-    //   - lean formatter for small payloads
+    // LIST
     // ============================================================
     async listClients(q = {}) {
         const page = Math.max(1, Number(q.page) || 1);
@@ -344,7 +334,6 @@ const Client360Service = {
 
         const filter = buildFilter(q);
 
-        // ⭐ Only fetch the fields the "All Clients" table renders
         const projection = [
             'name', 'tier', 'isPartner', 'sector', 'country', 'city', 'area',
             'location', 'stage', 'team', 'assignedRep',
@@ -378,7 +367,7 @@ const Client360Service = {
     },
 
     // ============================================================
-    // GET BY ID — keeps populate for profile page
+    // GET BY ID
     // ============================================================
     async getById(id) {
         const doc = await Client.findById(id)
@@ -388,7 +377,7 @@ const Client360Service = {
     },
 
     // ============================================================
-    // STATS — ⭐ OPTIMIZED (single aggregation instead of .find())
+    // STATS
     // ============================================================
     async getStats(q = {}) {
         const filter = buildFilter({
@@ -398,12 +387,10 @@ const Client360Service = {
             limit: undefined,
         });
 
-        // ⭐ Run 3 aggregations + 1 count in parallel — all server-side
         const [result] = await Client.aggregate([
             { $match: filter },
             {
                 $facet: {
-                    // ---- Totals ----
                     totals: [
                         {
                             $group: {
@@ -427,7 +414,6 @@ const Client360Service = {
                             },
                         },
                     ],
-                    // ---- Communication kinds ----
                     comm: [
                         { $unwind: { path: '$communicationLog', preserveNullAndEmptyArrays: false } },
                         {
@@ -470,7 +456,7 @@ const Client360Service = {
     },
 
     // ============================================================
-    // SECTOR BREAKDOWN — already aggregation-based ✅
+    // SECTOR BREAKDOWN
     // ============================================================
     async getSectorBreakdown(q = {}) {
         const filter = buildFilter({ ...q, search: undefined });
@@ -628,6 +614,41 @@ const Client360Service = {
             by: userId || null,
             linkedTo: entry.linkedTo || '',
         });
+        doc.updatedBy = userId;
+        await doc.save();
+
+        return fmtClient(doc);
+    },
+
+    // ⭐ NEW: UPDATE COMMUNICATION
+    async updateCommunication(clientId, logId, updates, userId) {
+        const doc = await Client.findById(clientId);
+        if (!doc) throw ApiError.notFound('Client not found');
+
+        const log = doc.communicationLog.id(logId);
+        if (!log) throw ApiError.notFound('Communication log not found');
+
+        if (updates.kind) log.kind = updates.kind;
+        if (updates.summary !== undefined) log.summary = updates.summary;
+        if (updates.body !== undefined) log.body = updates.body;
+        if (updates.at) log.at = new Date(updates.at);
+
+        doc.updatedBy = userId;
+        await doc.save();
+
+        return fmtClient(doc);
+    },
+
+    // ⭐ NEW: DELETE COMMUNICATION
+    async deleteCommunication(clientId, logId, userId) {
+        const doc = await Client.findById(clientId);
+        if (!doc) throw ApiError.notFound('Client not found');
+
+        const log = doc.communicationLog.id(logId);
+        if (!log) throw ApiError.notFound('Communication log not found');
+
+        log.deleteOne();
+
         doc.updatedBy = userId;
         await doc.save();
 
@@ -794,6 +815,125 @@ const Client360Service = {
                 unitPrice: l.principalCost,
             })),
         }));
+    },
+
+    // ============================================================
+    // QUOTES (⭐ নতুন)
+    // ============================================================
+    async addQuote(clientId, quoteData, userId) {
+        const doc = await Client.findById(clientId);
+        if (!doc) throw ApiError.notFound('Client not found');
+
+        doc.quotes.push({
+            quotationId: quoteData.quotationId || null,
+            qtnNumber: quoteData.qtnNumber || '',
+            item: quoteData.item || '',
+            value: Number(quoteData.value) || 0,
+            status: quoteData.status || 'Draft',
+            date: quoteData.date ? new Date(quoteData.date) : new Date(),
+        });
+
+        doc.updatedBy = userId;
+        await doc.save();
+
+        return fmtClient(doc);
+    },
+
+    async updateQuote(clientId, quoteId, updates, userId) {
+        const doc = await Client.findById(clientId);
+        if (!doc) throw ApiError.notFound('Client not found');
+
+        const quote = doc.quotes.id(quoteId);
+        if (!quote) throw ApiError.notFound('Quote not found');
+
+        if (updates.qtnNumber !== undefined) quote.qtnNumber = updates.qtnNumber;
+        if (updates.item !== undefined) quote.item = updates.item;
+        if (updates.value !== undefined) quote.value = Number(updates.value);
+        if (updates.status !== undefined) quote.status = updates.status;
+        if (updates.date !== undefined) quote.date = new Date(updates.date);
+
+        doc.updatedBy = userId;
+        await doc.save();
+
+        return fmtClient(doc);
+    },
+
+    // ============================================================
+    // CONTRACTS (⭐ নতুন)
+    // ============================================================
+    async addContract(clientId, contractData, userId) {
+        const doc = await Client.findById(clientId);
+        if (!doc) throw ApiError.notFound('Client not found');
+
+        doc.contracts.push({
+            contractId: contractData.contractId || null,
+            title: contractData.title || '',
+            value: Number(contractData.value) || 0,
+            startDate: contractData.startDate ? new Date(contractData.startDate) : null,
+            endDate: contractData.endDate ? new Date(contractData.endDate) : null,
+            renewalDue: contractData.renewalDue ? new Date(contractData.renewalDue) : null,
+            status: contractData.status || 'Active',
+        });
+
+        doc.updatedBy = userId;
+        await doc.save();
+
+        return fmtClient(doc);
+    },
+
+    async updateContract(clientId, contractId, updates, userId) {
+        const doc = await Client.findById(clientId);
+        if (!doc) throw ApiError.notFound('Client not found');
+
+        const contract = doc.contracts.id(contractId);
+        if (!contract) throw ApiError.notFound('Contract not found');
+
+        if (updates.title !== undefined) contract.title = updates.title;
+        if (updates.value !== undefined) contract.value = Number(updates.value);
+        if (updates.startDate !== undefined) contract.startDate = updates.startDate ? new Date(updates.startDate) : null;
+        if (updates.endDate !== undefined) contract.endDate = updates.endDate ? new Date(updates.endDate) : null;
+        if (updates.renewalDue !== undefined) contract.renewalDue = updates.renewalDue ? new Date(updates.renewalDue) : null;
+        if (updates.status !== undefined) contract.status = updates.status;
+
+        doc.updatedBy = userId;
+        await doc.save();
+
+        return fmtClient(doc);
+    },
+    // ============================================================
+    // DELETE QUOTE
+    // ============================================================
+    async deleteQuote(clientId, quoteId, userId) {
+        const doc = await Client.findById(clientId);
+        if (!doc) throw ApiError.notFound('Client not found');
+
+        const quote = doc.quotes.id(quoteId);
+        if (!quote) throw ApiError.notFound('Quote not found');
+
+        quote.deleteOne(); // Mongoose sub-document ডিলিট
+
+        doc.updatedBy = userId;
+        await doc.save();
+
+        return fmtClient(doc);
+    },
+
+    // ============================================================
+    // DELETE CONTRACT
+    // ============================================================
+    async deleteContract(clientId, contractId, userId) {
+        const doc = await Client.findById(clientId);
+        if (!doc) throw ApiError.notFound('Client not found');
+
+        const contract = doc.contracts.id(contractId);
+        if (!contract) throw ApiError.notFound('Contract not found');
+
+        contract.deleteOne(); // Mongoose sub-document ডিলিট
+
+        doc.updatedBy = userId;
+        await doc.save();
+
+        return fmtClient(doc);
     },
 
     getConstants() {

@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 
 const {
-Client360Controller,
+    Client360Controller,
 } = require('../../controllers/client360/client360.controller');
 const { authenticate } = require('../../middleware/auth.middleware');
 
@@ -41,6 +41,24 @@ router.delete('/:id/contacts/:contactId', Client360Controller.deleteContact);
 // COMMUNICATION LOG
 // ============================================================
 router.post('/:id/communications', Client360Controller.addCommunication);
+router.get('/:id/quotations', Client360Controller.getClientQuotations);
+
+// ⭐ NEW: Update and Delete for Communication Log
+router.patch('/:id/communications/:logId', Client360Controller.updateCommunication);
+router.delete('/:id/communications/:logId', Client360Controller.deleteCommunication);
+
+
+// ============================================================
+// QUOTES & CONTRACTS (⭐ নতুন যোগ করা হলো)
+// ============================================================
+router.post('/:id/quotes', Client360Controller.addQuote);
+router.patch('/:id/quotes/:quoteId', Client360Controller.updateQuote);
+router.delete('/:id/quotes/:quoteId', Client360Controller.deleteQuote);
+
+router.post('/:id/contracts', Client360Controller.addContract);
+router.patch('/:id/contracts/:contractId', Client360Controller.updateContract);
+router.delete('/:id/contracts/:contractId', Client360Controller.deleteContract);
+
 router.get('/:id/quotations', Client360Controller.getClientQuotations);
 
 module.exports = router;
