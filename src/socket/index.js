@@ -15,6 +15,7 @@ const initializeSocket = (server) => {
   // ✅ প্রোডাকশনের জন্য সঠিক CORS Origins
   const allowedOrigins = [
     "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://localhost:5000",
     "https://taskify-frontend-alpha.vercel.app",
@@ -50,8 +51,13 @@ const initializeSocket = (server) => {
     try {
       let token =
         socket.handshake.auth?.token ||
-        socket.handshake.headers?.authorization?.replace(/^Bearer\s+/i, "") ||
+        socket.handshake.headers?.authorization ||
         socket.handshake.query?.token;
+
+      // ⭐ Bearer টোকেন ফিক্স
+      if (token && token.startsWith("Bearer ")) {
+        token = token.slice(7, token.length).trim();
+      }
 
       if (!token && socket.handshake.headers?.cookie) {
         const match = socket.handshake.headers.cookie.match(
@@ -65,9 +71,8 @@ const initializeSocket = (server) => {
         return next(new Error("Authentication error: Token missing"));
       }
 
+      // ⭐ JWT Verify
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-      // ✅ support both "userId" (login) and "id" (signup)
       const userId = decoded.userId || decoded.id;
 
       if (!userId) {
