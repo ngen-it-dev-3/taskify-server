@@ -127,6 +127,8 @@ const directories = [
   { path: path.join(uploadsPath, "channels"), name: "channels" },
   { path: path.join(uploadsPath, "tenders"), name: "tenders" },
   { path: path.join(uploadsPath, "quotation-sources"), name: "quotation-sources" },
+  { path: path.join(uploadsPath, "tender-advertisements"), name: "tender-advertisements" },
+  { path: path.join(uploadsPath, "agreements"), name: "agreements" },
 ];
 
 for (const dir of directories) {
@@ -298,9 +300,9 @@ app.get("/", (req, res) => {
       .replace(/document.getElementById\('year'\).innerText = new Date\(\).getFullYear\(\);/g, `document.getElementById('year').innerText = ${new Date().getFullYear()};`);
 
     if (!dbConnected) {
-       finalHtml = finalHtml
-         .replace(/<span class="status-dot" style="width: 6px; height: 6px; margin-right: 4px;"><\/span> Connected/g, `<span class="status-dot" style="width: 6px; height: 6px; margin-right: 4px; background: #f43f5e; box-shadow: none;"></span> Disconnected`)
-         .replace(/badge badge-green" id="db-status"/g, `badge badge-red" id="db-status"`);
+      finalHtml = finalHtml
+        .replace(/<span class="status-dot" style="width: 6px; height: 6px; margin-right: 4px;"><\/span> Connected/g, `<span class="status-dot" style="width: 6px; height: 6px; margin-right: 4px; background: #f43f5e; box-shadow: none;"></span> Disconnected`)
+        .replace(/badge badge-green" id="db-status"/g, `badge badge-red" id="db-status"`);
     }
 
     res.send(finalHtml);

@@ -147,12 +147,21 @@ router.post(
 );
 router.delete("/:id/attachments/:attachmentId", tenderCtrl.deleteAttachment);
 
+
+router.post(
+    "/:id/agreements",
+    tenderUpload.single("file"), // এখানে tenderUpload ব্যবহার করা হলো
+    tenderCtrl.uploadAgreementFile,
+);
+
+
 router.post(
     "/:id/advertisement",
     advertisementUpload.single("file"),
     tenderCtrl.uploadAdvertisement,
 );
 router.delete("/:id/advertisement", tenderCtrl.deleteAdvertisement);
+
 
 /* ============================================================
  * GENERIC /:id — LAST

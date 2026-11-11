@@ -184,6 +184,28 @@ const TenderSchema = new mongoose.Schema(
         isUs: { type: Boolean, default: false },
       },
     ],
+    
+    /* NEW: Agreement & Delivery Files ---------- */
+    agreementFiles: [
+      {
+        title: { type: String, required: true },
+        fileUrl: { type: String, required: true },
+        fileName: { type: String },
+        category: { type: String, enum: ["agreement", "delivery"], default: "agreement" },
+
+        // ⭐ Agreement specific fields
+        noaDate: { type: Date, default: null },
+        contractDate: { type: Date, default: null },
+
+        // ⭐ Delivery specific fields
+        deliveryDate: { type: Date, default: null },
+        invoiceDate: { type: Date, default: null },
+        challanDate: { type: Date, default: null },
+        mushakDate: { type: Date, default: null },
+
+        uploadedAt: { type: Date, default: Date.now },
+      }
+    ],
 
     /* ---------- SUBMISSION CHECKLIST ---------- */
     checklist: [

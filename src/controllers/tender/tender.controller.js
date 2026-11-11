@@ -643,6 +643,64 @@ const uploadAttachment = async (req, res) => {
   }
 };
 
+
+
+
+
+
+/* ============================================================
+ * ⭐ UPLOAD AGREEMENT / DELIVERY FILE
+ * ============================================================ */
+const uploadAgreementFile = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    const tender = await Tender.findById(req.params.id);
+    if (!tender) {
+      try { fs.unlinkSync(req.file.path); } catch { }
+      return res.status(404).json({ success: false, message: "Tender not found" });
+    }
+
+    const { title, category, noaDate, contractDate, deliveryDate, invoiceDate, challanDate, mushakDate } = req.body;
+
+    const fileUrl = `/uploads/tenders/${req.file.filename}`;
+
+    const newFile = {
+      title,
+      category: category || "agreement",
+      fileUrl,
+      fileName: req.file.originalname,
+      noaDate: noaDate || null,
+      contractDate: contractDate || null,
+      deliveryDate: deliveryDate || null,
+      invoiceDate: invoiceDate || null,
+      challanDate: challanDate || null,
+      mushakDate: mushakDate || null,
+    };
+
+    tender.agreementFiles.push(newFile);
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    // Send back the newly created file (last in the array)
+    const created = tender.agreementFiles[tender.agreementFiles.length - 1];
+    res.status(201).json({ success: true, data: created });
+  } catch (error) {
+    console.error("uploadAgreementFile error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+
+
+
+
+
+
+
 /* ============================================================
  * DELETE ATTACHMENT
  * ============================================================ */
@@ -1289,4 +1347,5 @@ module.exports = {
   updateTodo,
   deleteTodo,
   addCompanyDocsToTender, // ✅ NEW EXPORT
+  uploadAgreementFile, // ✅ NEW EXPORT
 };
