@@ -1381,8 +1381,16 @@ const downloadAgreementZip = async (req, res) => {
       return res.status(404).json({ success: false, message: "Tender not found" });
     }
 
-    const files = tender.agreementFiles || [];
-    if (files.length === 0) {
+    // ⭐ ১. Agreement ফাইলগুলো নিন
+    const agreementFiles = tender.agreementFiles || [];
+
+    // ⭐ ২. Submitted Documents (attachments) ফাইলগুলো নিন
+    const submittedFiles = tender.attachments || [];
+
+    // ⭐ ৩. দুটো অ্যারে একসাথে করুন
+    const allFiles = [...agreementFiles, ...submittedFiles];
+
+    if (allFiles.length === 0) {
       return res.status(404).json({ success: false, message: "No files to download" });
     }
 
@@ -1391,7 +1399,6 @@ const downloadAgreementZip = async (req, res) => {
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
 
-    // ⭐ এখানে archiver কল করুন (require ছাড়া)
     const archive = archiver("zip", {
       zlib: { level: 9 },
     });
@@ -1403,14 +1410,21 @@ const downloadAgreementZip = async (req, res) => {
 
     archive.pipe(res);
 
-    for (const file of files) {
+    // ⭐ ৪. সব ফাইল ZIP-এ যোগ করুন
+    for (const file of allFiles) {
       try {
-        const filename = path.basename(file.fileUrl || "");
+        // Agreement ফাইলে file.fileUrl থাকে, Submitted ফাইলে file.url থাকে
+        const rawUrl = file.fileUrl || file.url || "";
+        const filename = path.basename(rawUrl);
         const fullPath = path.join(tenderUploadDir, filename);
 
         if (filename && fs.existsSync(fullPath)) {
           const ext = path.extname(filename);
-          const safeTitle = (file.title || "file").replace(/[^\w.\-]+/g, "_");
+
+          // ফাইলের নাম নির্ধারণ (title অথবা name)
+          const displayName = file.title || file.name || "file";
+          const safeTitle = displayName.replace(/[^\w.\-]+/g, "_").slice(0, 50);
+
           archive.file(fullPath, { name: `${safeTitle}${ext}` });
         }
       } catch (err) {
