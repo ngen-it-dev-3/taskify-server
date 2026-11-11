@@ -44,6 +44,7 @@ const RFQSchema = new mongoose.Schema(
         country: { type: String, required: true, index: true },
         date: { type: String, required: true },
         time: { type: String, required: true },
+        inquiryDate: { type: Date, default: Date.now },
         agingDays: { type: Number, default: 0 },
         stage: {
             type: String,
@@ -109,7 +110,8 @@ RFQSchema.index({ stage: 1, country: 1, createdAt: -1 });
 
 // ---- Auto-compute agingDays before save ----
 RFQSchema.pre('save', function (next) {
-    const created = this.createdAt || new Date();
+    // const created = this.createdAt || new Date();
+    const created = this.inquiryDate || this.createdAt || new Date();
     const diffMs = Date.now() - new Date(created).getTime();
     this.agingDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
     next();
