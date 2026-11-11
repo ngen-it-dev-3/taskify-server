@@ -40,13 +40,15 @@ function matchTenderToCriteria(tender, settings) {
   );
   if (productHits.length) matchedOn.push(...productHits);
 
-  /* Tender type exact match */
-  if (
-    Array.isArray(settings.tenderTypes) &&
-    settings.tenderTypes.length &&
-    includesStr(settings.tenderTypes, tender.tenderType)
-  ) {
-    matchedOn.push(tender.tenderType);
+  /* Tender type exact match — ⭐ FIXED: More robust comparison */
+  if (Array.isArray(settings.tenderTypes) && settings.tenderTypes.length) {
+    const tenderTypeLower = String(tender.tenderType || "").toLowerCase().trim();
+    // Check if the crawler-assigned type exists in settings
+    const matchedType = settings.tenderTypes.find(
+      (t) => String(t).toLowerCase().trim() === tenderTypeLower
+    );
+    // If a match is found, push it
+    if (matchedType) matchedOn.push(matchedType);
   }
 
   /* Value range */
@@ -111,21 +113,13 @@ async function runCrawlInternal({ userId = null } = {}) {
     console.warn("[crawl] recipients lookup failed:", err.message);
   }
 
-  /* 3. Crawl external sites
-   *
-   * Each result now includes `effectiveSectionSelector` (from the
-   * crawler service). We keep it on the per-site record so it can
-   * be surfaced in the crawl summary if desired.
-   */
+  /* 3. Crawl external sites */
   const crawlResults = await crawlAllSources({ delayMs: 1200 });
   const sitesChecked = crawlResults.length;
 
   let newFound = 0;
   const insertedIds = [];
 
-  /* Build a map { sourceName -> { effectiveSectionSelector, effectiveMode } }
-   * so we can attach the crawl-scope info to each inserted tender's
-   * source summary later. */
   const siteMetaByName = new Map();
   for (const r of crawlResults) {
     if (!r || !r.source) continue;
@@ -142,13 +136,17 @@ async function runCrawlInternal({ userId = null } = {}) {
     for (const t of siteResult.tenders) {
       newFound++;
 
-      /* Dedupe by link */
-      if (t.tenderLink) {
-        const exists = await Tender.findOne({ tenderLink: t.tenderLink })
-          .select("_id")
-          .lean();
-        if (exists) continue;
-      }
+      /* ⭐ Dedupe by title AND sourceSite (more reliable than just link) */
+      // If the exact title already exists for this site, skip it.
+      // This prevents duplicates while allowing new tenders from the same site.
+      const exists = await Tender.findOne({
+        title: t.title,
+        tenderer: t.sourceSite || "Auto-discovered",
+      })
+        .select("_id")
+        .lean();
+        
+      if (exists) continue;
 
       /* Insert auto-discovered tender */
       try {
@@ -159,7 +157,7 @@ async function runCrawlInternal({ userId = null } = {}) {
           stage: "potential",
           draft: false,
           autoDiscovered: true,
-          tenderType: "eGP",
+          tenderType: "eGP", // ⭐ Default, but settings will override in match
           recordedBy: "Auto-discovered",
           owner: userId,
           createdBy: userId,
@@ -182,6 +180,7 @@ async function runCrawlInternal({ userId = null } = {}) {
   for (const t of pool) {
     const matchedOn = matchTenderToCriteria(t, settings);
 
+    // ⭐ Check if ANY criteria are set
     const hasAnyCriteria =
       (settings.sectors?.length || 0) > 0 ||
       (settings.productLines?.length || 0) > 0 ||
@@ -191,6 +190,8 @@ async function runCrawlInternal({ userId = null } = {}) {
       settings.securityMin != null ||
       settings.securityMax != null;
 
+    // ⭐ If criteria are set AND nothing matched, skip. 
+    // If no criteria are set, we still want to show the tender.
     if (hasAnyCriteria && matchedOn.length === 0) continue;
 
     const { sourceSite, sourceUrl } = deriveSource(t);
@@ -266,7 +267,6 @@ async function runCrawlInternal({ userId = null } = {}) {
     inserted: insertedIds.length,
     emailed,
     results: matchedResults,
-    /* ✅ NEW — expose per-site crawl scope (useful for diagnostics) */
     siteScopes: Array.from(siteMetaByName.entries()).map(([name, meta]) => ({
       name,
       ...meta,

@@ -44,7 +44,7 @@ const RFQSchema = new mongoose.Schema(
         country: { type: String, required: true, index: true },
         date: { type: String, required: true },
         time: { type: String, required: true },
-        inquiryDate: { type: Date, default: Date.now },
+        inquiryDate: { type: String, default: '' },
         agingDays: { type: Number, default: 0 },
         stage: {
             type: String,
