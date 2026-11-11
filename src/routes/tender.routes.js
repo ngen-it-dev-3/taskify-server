@@ -137,7 +137,7 @@ router.patch("/:id/sections/:sectionId/todos/:todoId", tenderCtrl.updateTodo);
 router.delete("/:id/sections/:sectionId/todos/:todoId", tenderCtrl.deleteTodo);
 router.post("/:id/sections/apply-template", tenderCtrl.applySectionTemplate);
 
-/* ✅ Notify Finance for a tender */
+
 router.post("/:id/notify-finance", tenderCtrl.notifyFinance);
 
 router.post(
