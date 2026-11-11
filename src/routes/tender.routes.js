@@ -153,7 +153,9 @@ router.post(
     tenderUpload.single("file"), // এখানে tenderUpload ব্যবহার করা হলো
     tenderCtrl.uploadAgreementFile,
 );
-
+router.get("/:id/agreements/download-zip", tenderCtrl.downloadAgreementZip);
+router.patch("/:id/agreements/:fileId", tenderCtrl.updateAgreementFile);
+router.delete("/:id/agreements/:fileId", tenderCtrl.deleteAgreementFile);
 
 router.post(
     "/:id/advertisement",

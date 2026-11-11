@@ -9,6 +9,7 @@ const {
   advertisementUploadDir,
 } = require("../../middleware/upload.middleware");
 const { sendMail } = require("../../utils/mailer");
+const archiver = require("archiver");
 
 /* Lazy-require to avoid circular dep issues with submission.controller */
 function getRecomputeReadiness() {
@@ -27,7 +28,7 @@ const LIST_FIELDS = [
   "advertisementUploadedAt", "attachments", "eligibility", "eligibilityRequirements",
   "recordedBy", "responsiblePerson", "tenderLink", "note", "lossReason",
   "lowestCompliantBidder", "lowestCompliantValue", "checklist", "otherParticipants",
-  "packageMode", "packageLabel", "sections", "notes", "updatedAt", "createdAt",
+  "packageMode", "packageLabel", "sections", "notes", "updatedAt", "createdAt", "agreementFiles",
 ].join(" ");
 
 /* ============================================================
@@ -643,11 +644,6 @@ const uploadAttachment = async (req, res) => {
   }
 };
 
-
-
-
-
-
 /* ============================================================
  * ⭐ UPLOAD AGREEMENT / DELIVERY FILE
  * ============================================================ */
@@ -692,14 +688,68 @@ const uploadAgreementFile = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+/* ============================================================
+ * ⭐ UPDATE AGREEMENT FILE TITLE
+ * ============================================================ */
+const updateAgreementFile = async (req, res) => {
+  try {
+    const { id, fileId } = req.params;
+    const { title } = req.body;
 
+    if (!title || !title.trim()) {
+      return res.status(400).json({ success: false, message: "Title is required" });
+    }
 
+    const tender = await Tender.findById(id);
+    if (!tender) return res.status(404).json({ success: false, message: "Tender not found" });
 
+    const file = tender.agreementFiles.id(fileId);
+    if (!file) return res.status(404).json({ success: false, message: "File not found" });
 
+    file.title = title.trim();
+    tender.updatedBy = req.user._id;
+    await tender.save();
 
+    res.json({ success: true, data: file });
+  } catch (error) {
+    console.error("updateAgreementFile error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
+/* ============================================================
+ * ⭐ DELETE AGREEMENT FILE
+ * ============================================================ */
+const deleteAgreementFile = async (req, res) => {
+  try {
+    const { id, fileId } = req.params;
 
+    const tender = await Tender.findById(id);
+    if (!tender) return res.status(404).json({ success: false, message: "Tender not found" });
 
+    const file = tender.agreementFiles.id(fileId);
+    if (!file) return res.status(404).json({ success: false, message: "File not found" });
+
+    // Delete from disk
+    try {
+      const filename = path.basename(file.fileUrl || "");
+      const full = path.join(tenderUploadDir, filename);
+      if (filename && fs.existsSync(full)) fs.unlinkSync(full);
+    } catch (err) {
+      console.warn("Could not delete file from disk:", err.message);
+    }
+
+    // Remove from array
+    tender.agreementFiles.pull(fileId);
+    tender.updatedBy = req.user._id;
+    await tender.save();
+
+    res.json({ success: true, message: "File deleted" });
+  } catch (error) {
+    console.error("deleteAgreementFile error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
 /* ============================================================
  * DELETE ATTACHMENT
@@ -1322,6 +1372,59 @@ const applySectionTemplate = async (req, res) => {
   }
 };
 
+const downloadAgreementZip = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const tender = await Tender.findById(id).lean();
+    if (!tender) {
+      return res.status(404).json({ success: false, message: "Tender not found" });
+    }
+
+    const files = tender.agreementFiles || [];
+    if (files.length === 0) {
+      return res.status(404).json({ success: false, message: "No files to download" });
+    }
+
+    const zipName = `${tender.tenderer}_${tender.title}_files.zip`.replace(/[^\w.\-]+/g, "_");
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
+
+    // ⭐ এখানে archiver কল করুন (require ছাড়া)
+    const archive = archiver("zip", {
+      zlib: { level: 9 },
+    });
+
+    archive.on("error", (err) => {
+      console.error("Archiver error:", err);
+      res.status(500).end();
+    });
+
+    archive.pipe(res);
+
+    for (const file of files) {
+      try {
+        const filename = path.basename(file.fileUrl || "");
+        const fullPath = path.join(tenderUploadDir, filename);
+
+        if (filename && fs.existsSync(fullPath)) {
+          const ext = path.extname(filename);
+          const safeTitle = (file.title || "file").replace(/[^\w.\-]+/g, "_");
+          archive.file(fullPath, { name: `${safeTitle}${ext}` });
+        }
+      } catch (err) {
+        console.warn("Could not add file to zip:", err.message);
+      }
+    }
+
+    await archive.finalize();
+  } catch (error) {
+    console.error("downloadAgreementZip error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   listTenders,
   getTender,
@@ -1346,6 +1449,9 @@ module.exports = {
   addTodo,
   updateTodo,
   deleteTodo,
-  addCompanyDocsToTender, // ✅ NEW EXPORT
-  uploadAgreementFile, // ✅ NEW EXPORT
+  addCompanyDocsToTender,
+  uploadAgreementFile,
+  updateAgreementFile,
+  deleteAgreementFile,
+  downloadAgreementZip,
 };
