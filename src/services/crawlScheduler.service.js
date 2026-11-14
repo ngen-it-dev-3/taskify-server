@@ -17,10 +17,12 @@ function includesStr(list, value) {
 function matchTenderToCriteria(tender, settings) {
   const matchedOn = [];
 
+  // 🟢 টাইটেল, টেন্ডারার এবং অন্যান্য টেক্সট ফিল্ড একসাথে
   const text = [
     tender.title,
     tender.description,
     tender.tenderer,
+    tender.sourceSite,
     tender.eligibility,
     tender.note,
   ]
@@ -40,14 +42,12 @@ function matchTenderToCriteria(tender, settings) {
   );
   if (productHits.length) matchedOn.push(...productHits);
 
-  /* Tender type exact match — ⭐ FIXED: More robust comparison */
+  /* Tender type exact match */
   if (Array.isArray(settings.tenderTypes) && settings.tenderTypes.length) {
     const tenderTypeLower = String(tender.tenderType || "").toLowerCase().trim();
-    // Check if the crawler-assigned type exists in settings
     const matchedType = settings.tenderTypes.find(
       (t) => String(t).toLowerCase().trim() === tenderTypeLower
     );
-    // If a match is found, push it
     if (matchedType) matchedOn.push(matchedType);
   }
 
@@ -68,10 +68,8 @@ function matchTenderToCriteria(tender, settings) {
   /* Performance security range */
   const psec = Number(tender.performanceSecurityAmount || 0);
   if (psec > 0) {
-    if (settings.performanceMin != null && psec < settings.performanceMin)
-      return [];
-    if (settings.performanceMax != null && psec > settings.performanceMax)
-      return [];
+    if (settings.performanceMin != null && psec < settings.performanceMin) return [];
+    if (settings.performanceMax != null && psec > settings.performanceMax) return [];
     matchedOn.push("In perf. security range");
   }
 
@@ -89,7 +87,7 @@ function deriveSource(tender) {
 }
 
 /* ============================================================
- * RUN CRAWL — used by both the HTTP route and the cron
+ * RUN CRAWL
  * ============================================================ */
 async function runCrawlInternal({ userId = null } = {}) {
   /* 1. Load settings */
@@ -136,28 +134,29 @@ async function runCrawlInternal({ userId = null } = {}) {
     for (const t of siteResult.tenders) {
       newFound++;
 
-      /* ⭐ Dedupe by title AND sourceSite (more reliable than just link) */
-      // If the exact title already exists for this site, skip it.
-      // This prevents duplicates while allowing new tenders from the same site.
+      /* 🟢 ডুপ্লিকেট চেক */
       const exists = await Tender.findOne({
         title: t.title,
-        tenderer: t.sourceSite || "Auto-discovered",
+        sourceSite: t.sourceSite || "Auto-discovered",
       })
         .select("_id")
         .lean();
-        
+
       if (exists) continue;
 
       /* Insert auto-discovered tender */
       try {
         const created = await Tender.create({
           tenderer: t.sourceSite || "Auto-discovered",
+          sourceSite: t.sourceSite || "Auto-discovered",
           title: t.title,
           tenderLink: t.tenderLink,
           stage: "potential",
           draft: false,
           autoDiscovered: true,
-          tenderType: "eGP", // ⭐ Default, but settings will override in match
+          tenderType: "eGP",
+          tentativeBudget: t.tentativeBudget || 0,
+          tenderSecurityAmount: t.tenderSecurityAmount || 0,
           recordedBy: "Auto-discovered",
           owner: userId,
           createdBy: userId,
@@ -171,16 +170,20 @@ async function runCrawlInternal({ userId = null } = {}) {
     }
   }
 
-  /* 4. Match against criteria */
-  const pool = insertedIds.length
-    ? await Tender.find({ _id: { $in: insertedIds } }).lean()
-    : [];
+  /* ============================================================
+   * 4. MATCH AGAINST CRITERIA (🟢 FIXED: ALL AUTO-DISCOVERED TENDERS)
+   * ============================================================ */
+  // নতুন টেন্ডার না পেলেও, ডেটাবেসে আগের থাকা সব অটো-ডিসকভারড টেন্ডার চেক করুন
+  const pool = await Tender.find({ 
+    autoDiscovered: true,
+    stage: "potential" 
+  }).lean();
 
   const matchedResults = [];
   for (const t of pool) {
     const matchedOn = matchTenderToCriteria(t, settings);
 
-    // ⭐ Check if ANY criteria are set
+    // 🟢 ক্রাইটেরিয়া চেক
     const hasAnyCriteria =
       (settings.sectors?.length || 0) > 0 ||
       (settings.productLines?.length || 0) > 0 ||
@@ -190,8 +193,7 @@ async function runCrawlInternal({ userId = null } = {}) {
       settings.securityMin != null ||
       settings.securityMax != null;
 
-    // ⭐ If criteria are set AND nothing matched, skip. 
-    // If no criteria are set, we still want to show the tender.
+    // যদি কোনো ক্রাইটেরিয়া সেট না থাকে, তবে সব টেন্ডার ম্যাচ হবে
     if (hasAnyCriteria && matchedOn.length === 0) continue;
 
     const { sourceSite, sourceUrl } = deriveSource(t);
@@ -200,7 +202,7 @@ async function runCrawlInternal({ userId = null } = {}) {
       tenderId: t._id,
       title: t.title || "(untitled)",
       tenderer: t.tenderer || "",
-      sourceSite,
+      sourceSite: t.sourceSite || sourceSite,
       sourceUrl,
       budget: Number(t.tentativeBudget || t.bidValue || 0),
       securityAmount: Number(t.tenderSecurityAmount || 0),

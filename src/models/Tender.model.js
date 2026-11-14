@@ -89,10 +89,10 @@ const TenderSchema = new mongoose.Schema(
       index: true,
     },
 
-    /* ---------- TYPE ---------- */
+    /* ---------- TYPE (🟢 Added "Direct") ---------- */
     tenderType: {
       type: String,
-      enum: ["eGP", "RFQ", "Hardcopy Ref."],
+      enum: ["eGP", "RFQ", "Direct", "Hardcopy Ref."],
       default: "eGP",
     },
 
@@ -101,6 +101,9 @@ const TenderSchema = new mongoose.Schema(
     recordedBy: { type: String, default: "" },
     responsiblePerson: { type: String, default: "" },
     description: { type: String, default: "" },
+
+    /* 🟢 NEW: Source Site (crawler identified site name) */
+    sourceSite: { type: String, default: "", trim: true, index: true },
 
     /* ---------- DATES ---------- */
     lastDateOfPurchase: { type: Date, default: null },   // Purchase Date
@@ -267,6 +270,9 @@ const TenderSchema = new mongoose.Schema(
         note: { type: String, default: "" },
       },
     ],
+
+    /* 🟢 NEW: Auto-Discovered Flag */
+    autoDiscovered: { type: Boolean, default: false, index: true },
   },
   { timestamps: true },
 );
@@ -277,6 +283,7 @@ TenderSchema.index({ stage: 1, updatedAt: -1 });
 TenderSchema.index({ tenderType: 1, updatedAt: -1 });
 TenderSchema.index({ owner: 1, updatedAt: -1 });
 TenderSchema.index({ stage: 1, owner: 1 });
+TenderSchema.index({ sourceSite: 1, title: 1 }); // 🟢 for dedupe lookup
 TenderSchema.index({ tenderer: "text", title: "text", description: "text" });
 TenderSchema.index({ lastDateOfSubmission: 1 });
 TenderSchema.index({ lastDateOfPurchase: 1 });

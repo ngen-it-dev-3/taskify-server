@@ -32,30 +32,13 @@ function domainOf(url) {
   }
 }
 
-/* ============================================================
- * Normalize a user-typed selector.
- *
- * Users often type "noticeTable" meaning "#noticeTable".
- * This turns bare identifiers into ID selectors so the match
- * actually works against real HTML.
- * ============================================================ */
 function normalizeSelector(sel) {
   const s = (sel || "").trim();
   if (!s) return "";
-  // Bare identifier → ID selector
   if (/^[A-Za-z_][\w-]*$/.test(s)) return `#${s}`;
   return s;
 }
 
-/* ============================================================
- * Build a scoped cheerio context using sectionSelector
- *
- * IMPORTANT: We do NOT rebuild the cheerio root. Rebuilding
- * destroys sibling context (e.g. DataTables wrappers).
- *
- * We also try alternate interpretations of the selector when
- * the primary one fails, so a plain "noticeTable" still works.
- * ============================================================ */
 function buildScope($full, sectionSelector) {
   const raw = (sectionSelector || "").trim();
   if (!raw) {
@@ -70,39 +53,24 @@ function buildScope($full, sectionSelector) {
     try {
       const matched = $full(sel);
       if (matched.length > 0) {
-        return {
-          $scope: $full,
-          matched,
-          effectiveSectionSelector: sel,
-        };
+        return { $scope: $full, matched, effectiveSectionSelector: sel };
       }
-    } catch {
-      /* invalid selector — try next */
-    }
+    } catch { }
   }
-
-  // Nothing matched — fall back to full page
   return { $scope: $full, matched: null, effectiveSectionSelector: null };
 }
 
-/* ============================================================
- * AUTO-DETECT SELECTORS
- * ============================================================ */
 function autoDetectSelectors($, matched) {
-  /* Helper: search inside the section first, then the whole page */
   const findRows = (selector) => {
     if (matched && matched.length > 0) {
       try {
         const within = matched.find(selector);
         if (within.length > 0) return within;
-      } catch {
-        /* invalid selector — fall through */
-      }
+      } catch { }
     }
     return $(selector);
   };
 
-  /* ---------- 1. Table-based portals ---------- */
   const TABLE_ROW_CANDIDATES = [
     "table tbody tr",
     "table.dataTable tbody tr",
@@ -125,11 +93,9 @@ function autoDetectSelectors($, matched) {
     if (rows.length < 3) continue;
 
     const firstRow = rows.first();
-    // ✅ Support both <td> AND <th>
     const cells = firstRow.find("td, th");
     if (cells.length === 0) continue;
 
-    /* Find the cell with the highest "tender-likeness" score */
     let bestCellIdx = -1;
     let bestScore = 0;
 
@@ -141,10 +107,8 @@ function autoDetectSelectors($, matched) {
       links.each((_, a) => {
         const txt = $(a).text().trim();
         const href = $(a).attr("href") || "";
-
         if (txt.length > 20) score += 2;
-        if (/tender|supply|procurement|repair|purchase|work|consultancy|bid|bulletin/i.test(txt))
-          score += 3;
+        if (/tender|supply|procurement|repair|purchase|work|consultancy|bid|bulletin/i.test(txt)) score += 3;
         if (/\/\d{4}\//.test(href)) score += 1;
         if (/\.pdf$/i.test(href)) score += 1;
       });
@@ -155,8 +119,6 @@ function autoDetectSelectors($, matched) {
       }
     });
 
-    /* If no cell scored but rows exist with 2+ cells, use cell index 1
-     * (usually the second column which is the title on most portals). */
     if (bestCellIdx === -1 && cells.length >= 2) bestCellIdx = 1;
     if (bestCellIdx === -1) continue;
 
@@ -170,7 +132,6 @@ function autoDetectSelectors($, matched) {
     };
   }
 
-  /* ---------- 2. Card / list-based portals ---------- */
   const LIST_CANDIDATES = [
     ".tender-list .tender-item",
     ".tender-list > li",
@@ -200,10 +161,8 @@ function autoDetectSelectors($, matched) {
     };
   }
 
-  /* ---------- 3. Fallback: raw link scan ---------- */
   const TENDER_HREF_RE = /\/(tender|tenders|notice|notices|procurement|egp)\//i;
-  const TENDER_TEXT_RE =
-    /tender|supply|procurement|purchase|repair|work|consultancy|re-?tender|bid|bulletin/i;
+  const TENDER_TEXT_RE = /tender|supply|procurement|purchase|repair|work|consultancy|re-?tender|bid|bulletin/i;
 
   const links = [];
   const linkPool = matched && matched.length > 0 ? matched.find("a") : $("a");
@@ -211,11 +170,7 @@ function autoDetectSelectors($, matched) {
   linkPool.each((_, a) => {
     const href = $(a).attr("href") || "";
     const text = $(a).text().trim();
-
-    if (
-      text.length >= 15 &&
-      (TENDER_HREF_RE.test(href) || TENDER_TEXT_RE.test(text))
-    ) {
+    if (text.length >= 15 && (TENDER_HREF_RE.test(href) || TENDER_TEXT_RE.test(text))) {
       links.push({ text, href });
     }
   });
@@ -235,15 +190,11 @@ function autoDetectSelectors($, matched) {
 }
 
 /* ============================================================
- * Cheerio parser (static HTML)
+ * Cheerio parser (static HTML) — Added Budget & Security
  * ============================================================ */
 function parseWithCheerio(html, source) {
   const $full = cheerio.load(html);
-
-  const { $scope, matched, effectiveSectionSelector } = buildScope(
-    $full,
-    source.sectionSelector,
-  );
+  const { $scope, matched, effectiveSectionSelector } = buildScope($full, source.sectionSelector);
 
   let effective = {
     listSelector: source.listSelector || "",
@@ -256,20 +207,15 @@ function parseWithCheerio(html, source) {
   let detected = null;
   if (!effective.listSelector) {
     const auto = autoDetectSelectors($scope, matched);
-    if (!auto) {
-      return { tenders: [], effectiveSectionSelector, detected: null };
-    }
+    if (!auto) return { tenders: [], effectiveSectionSelector, detected: null };
     detected = auto;
     effective = { ...effective, ...auto };
   }
 
-  /* Fallback sentinel */
   if (effective.listSelector === "__fallback_links__") {
     const list = (effective._fallbackLinks || []).map((c) => ({
       title: c.text,
-      tenderLink: source.absoluteLinks
-        ? toAbsolute(c.href, source.url)
-        : c.href,
+      tenderLink: source.absoluteLinks ? toAbsolute(c.href, source.url) : c.href,
       publishedAtText: "",
       sourceSite: source.name,
       sourceDomain: source.domain || domainOf(source.url),
@@ -277,7 +223,6 @@ function parseWithCheerio(html, source) {
     return { tenders: list, effectiveSectionSelector, detected };
   }
 
-  /* Prefer rows inside the section when a section is present */
   let rows;
   if (matched && matched.length > 0) {
     try {
@@ -291,36 +236,36 @@ function parseWithCheerio(html, source) {
   }
 
   const tenders = [];
-
   rows.each((_, el) => {
     const $el = $scope(el);
 
-    /* Title */
     let title = $el.find(effective.titleSelector).text().trim();
     if (!title) {
-      title =
-        $el.find("a").first().text().trim() ||
-        $el.find("td, th").eq(1).text().trim() ||
-        "";
+      title = $el.find("a").first().text().trim() || $el.find("td, th").eq(1).text().trim() || "";
     }
     if (!title) return;
 
-    /* Link */
-    let rawLink =
-      $el.find(effective.linkSelector).attr(effective.linkAttr) || "";
-    if (!rawLink) {
-      rawLink = $el.find("a[href]").first().attr("href") || "";
-    }
+    let rawLink = $el.find(effective.linkSelector).attr(effective.linkAttr) || "";
+    if (!rawLink) rawLink = $el.find("a[href]").first().attr("href") || "";
 
-    /* Date */
     const dateText = $el.find(effective.dateSelector).text().trim();
+
+    // 🟢 বাজেট এবং সিকিউরিটি স্ক্র্যাপ করার চেষ্টা (সব টেবিলে থাকে না, তবে চেষ্টা করা ভালো)
+    let budget = 0;
+    let security = 0;
+    const rowText = $el.text();
+    const budgetMatch = rowText.match(/(?:Tender Value|Budget|Value)[\s:]*([\d,]+)/i);
+    if (budgetMatch) budget = Number(budgetMatch[1].replace(/,/g, ''));
+
+    const securityMatch = rowText.match(/(?:Security|Tender Security)[\s:]*([\d,]+)/i);
+    if (securityMatch) security = Number(securityMatch[1].replace(/,/g, ''));
 
     tenders.push({
       title,
-      tenderLink: source.absoluteLinks
-        ? toAbsolute(rawLink, source.url)
-        : rawLink,
+      tenderLink: source.absoluteLinks ? toAbsolute(rawLink, source.url) : rawLink,
       publishedAtText: dateText,
+      tentativeBudget: budget,        // 🟢 নতুন
+      tenderSecurityAmount: security, // 🟢 নতুন
       sourceSite: source.name,
       sourceDomain: source.domain || domainOf(source.url),
     });
@@ -330,19 +275,13 @@ function parseWithCheerio(html, source) {
 }
 
 /* ============================================================
- * Puppeteer parser — honours sectionSelector
+ * Puppeteer parser — Added Budget & Security
  * ============================================================ */
 async function parseWithPuppeteer(source) {
   const puppeteer = require("puppeteer");
-
   const browser = await puppeteer.launch({
     headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--ignore-certificate-errors",
-    ],
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--ignore-certificate-errors"],
   });
 
   try {
@@ -351,10 +290,7 @@ async function parseWithPuppeteer(source) {
     await page.setViewport({ width: 1366, height: 900 });
     await page.setBypassCSP(true);
 
-    await page.goto(source.url, {
-      waitUntil: "networkidle2",
-      timeout: 45000,
-    });
+    await page.goto(source.url, { waitUntil: "networkidle2", timeout: 45000 });
 
     const rawSection = (source.sectionSelector || "").trim();
     const sectionSel = normalizeSelector(rawSection);
@@ -365,9 +301,7 @@ async function parseWithPuppeteer(source) {
         await page.waitForSelector(sectionSel, { timeout: 15000 });
         effectiveSectionSelector = sectionSel;
       } catch {
-        console.warn(
-          `[puppeteer] sectionSelector "${sectionSel}" not found on ${source.url} — using full page`,
-        );
+        console.warn(`[puppeteer] sectionSelector "${sectionSel}" not found on ${source.url} — using full page`);
       }
     }
 
@@ -375,9 +309,7 @@ async function parseWithPuppeteer(source) {
       try {
         await page.waitForSelector(source.listSelector, { timeout: 20000 });
       } catch {
-        console.warn(
-          `[puppeteer] selector "${source.listSelector}" not found within 20s`,
-        );
+        console.warn(`[puppeteer] selector "${source.listSelector}" not found within 20s`);
       }
     }
 
@@ -389,24 +321,19 @@ async function parseWithPuppeteer(source) {
     if (!source.listSelector) {
       const renderedHtml = await page.content();
       const $full = cheerio.load(renderedHtml);
-      const { matched, effectiveSectionSelector: detectedSection } =
-        buildScope($full, rawSection);
+      const { matched, effectiveSectionSelector: detectedSection } = buildScope($full, rawSection);
 
       if (detectedSection) effectiveSectionSelector = detectedSection;
 
       const auto = autoDetectSelectors($full, matched);
-      if (!auto) {
-        return { tenders: [], effectiveSectionSelector, detected: null };
-      }
+      if (!auto) return { tenders: [], effectiveSectionSelector, detected: null };
       detected = auto;
       effective = { ...source, ...auto };
 
       if (effective.listSelector === "__fallback_links__") {
         const list = (effective._fallbackLinks || []).map((c) => ({
           title: c.text,
-          tenderLink: source.absoluteLinks
-            ? toAbsolute(c.href, source.url)
-            : c.href,
+          tenderLink: source.absoluteLinks ? toAbsolute(c.href, source.url) : c.href,
           publishedAtText: "",
           sourceSite: source.name,
           sourceDomain: source.domain || domainOf(source.url),
@@ -417,18 +344,10 @@ async function parseWithPuppeteer(source) {
 
     const tenders = await page.evaluate(
       (cfg) => {
-        const sectionEl = cfg.section
-          ? document.querySelector(cfg.section)
-          : null;
+        const sectionEl = cfg.section ? document.querySelector(cfg.section) : null;
         const root = sectionEl || document;
 
-        const rowCandidates = [
-          cfg.row,
-          "table tbody tr",
-          "tbody tr",
-          "tr[role='row']",
-        ];
-
+        const rowCandidates = [cfg.row, "table tbody tr", "tbody tr", "tr[role='row']"];
         let rows = [];
         for (const sel of rowCandidates) {
           if (!sel) continue;
@@ -438,26 +357,19 @@ async function parseWithPuppeteer(source) {
               rows = Array.from(found);
               break;
             }
-          } catch {
-            /* invalid selector — skip */
-          }
+          } catch { }
         }
 
         const out = [];
-
         rows.forEach((row) => {
           let title = "";
           if (cfg.title) {
             try {
               const t = row.querySelector(cfg.title);
               if (t) title = t.innerText.trim();
-            } catch {
-              /* invalid */
-            }
+            } catch { }
           }
-          if (!title) {
-            title = (row.innerText || "").trim().split("\n")[0];
-          }
+          if (!title) title = (row.innerText || "").trim().split("\n")[0];
           if (!title) return;
 
           let rawLink = "";
@@ -465,9 +377,7 @@ async function parseWithPuppeteer(source) {
             try {
               const l = row.querySelector(cfg.link);
               if (l) rawLink = l.getAttribute(cfg.linkAttr || "href") || "";
-            } catch {
-              /* invalid */
-            }
+            } catch { }
           }
           if (!rawLink) {
             const l = row.querySelector("a[href]");
@@ -475,26 +385,31 @@ async function parseWithPuppeteer(source) {
           }
 
           let absLink = rawLink;
-          try {
-            absLink = new URL(rawLink, window.location.href).toString();
-          } catch {
-            absLink = rawLink;
-          }
+          try { absLink = new URL(rawLink, window.location.href).toString(); } catch { absLink = rawLink; }
 
           let dateText = "";
           if (cfg.date) {
             try {
               const d = row.querySelector(cfg.date);
               if (d) dateText = d.innerText.trim();
-            } catch {
-              /* invalid */
-            }
+            } catch { }
           }
+
+          // 🟢 বাজেট এবং সিকিউরিটি স্ক্র্যাপ
+          let budget = 0;
+          let security = 0;
+          const rowText = row.innerText || "";
+          const budgetMatch = rowText.match(/(?:Tender Value|Budget|Value)[\s:]*([\d,]+)/i);
+          if (budgetMatch) budget = Number(budgetMatch[1].replace(/,/g, ''));
+          const securityMatch = rowText.match(/(?:Security|Tender Security)[\s:]*([\d,]+)/i);
+          if (securityMatch) security = Number(securityMatch[1].replace(/,/g, ''));
 
           out.push({
             title,
             tenderLink: absLink,
             publishedAtText: dateText,
+            tentativeBudget: budget,
+            tenderSecurityAmount: security,
           });
         });
 
@@ -524,14 +439,12 @@ async function parseWithPuppeteer(source) {
   }
 }
 
-/* ---------- Fetch raw HTML ---------- */
 async function fetchHtml(url) {
   const { data } = await axios.get(url, {
     timeout: 20000,
     headers: {
       "User-Agent": randomUA(),
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
     },
     maxRedirects: 5,
@@ -541,7 +454,6 @@ async function fetchHtml(url) {
   return data;
 }
 
-/* ---------- Crawl one site (auto mode with fallback) ---------- */
 async function crawlOne(source) {
   const started = new Date();
   const isPersisted = !!source._id;
@@ -575,16 +487,12 @@ async function crawlOne(source) {
         detectedSelectors = r.detected;
         effectiveSectionSelector = r.effectiveSectionSelector;
       } catch (err) {
-        console.warn(
-          `[crawl] cheerio fetch failed for ${source.name}: ${err.message}`,
-        );
+        console.warn(`[crawl] cheerio fetch failed for ${source.name}: ${err.message}`);
         tenders = [];
       }
 
       if (tenders.length === 0) {
-        console.log(
-          `[crawl] cheerio found 0 on ${source.name} — trying puppeteer…`,
-        );
+        console.log(`[crawl] cheerio found 0 on ${source.name} — trying puppeteer…`);
         const r = await parseWithPuppeteer(source);
         tenders = r.tenders;
         detectedSelectors = r.detected;
@@ -606,6 +514,7 @@ async function crawlOne(source) {
     return {
       ok: true,
       source: source.name,
+      sourceId: source._id, // 🟢 নতুন
       count: tenders.length,
       tenders,
       effectiveMode,
@@ -626,6 +535,7 @@ async function crawlOne(source) {
     return {
       ok: false,
       source: source.name,
+      sourceId: source._id,
       count: 0,
       tenders: [],
       error: err.message,
