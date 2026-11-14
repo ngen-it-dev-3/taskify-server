@@ -67,7 +67,7 @@ const RFQSchema = new mongoose.Schema(
             enum: ['Email', 'Phone', 'WhatsApp', 'In-Person', 'Other'],
             default: 'Email',
         },
-
+        rfqSource: { type: String, default: '' },
         // Client info (flattened)
         contactName: { type: String, required: true },
         email: { type: String, required: true, lowercase: true, trim: true },

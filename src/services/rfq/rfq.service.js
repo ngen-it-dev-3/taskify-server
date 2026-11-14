@@ -79,6 +79,7 @@ function toClientShape(doc) {
     territory: d.territory || '',
     currency: d.currency || 'BDT',
     exchangeRate: d.exchangeRate || 1,
+    rfqSource: d.rfqSource || '',
     clientInfo: {
       contactName: d.contactName,
       email: d.email,
@@ -202,6 +203,7 @@ const RFQService = {
       salesman: dto.salesman || dto.assignedTo || 'Unassigned',
       assignedTo: dto.assignedTo || 'Unassigned',
       receivedVia: dto.receivedVia,
+      rfqSource: dto.rfqSource || '',
       inquiryDate: dto.inquiryDate || new Date(),
       contactName: dto.contactName,
       email: dto.email,
@@ -357,6 +359,7 @@ const RFQService = {
     if (dto.tentativePurchaseDate !== undefined) doc.tentativePurchaseDate = dto.tentativePurchaseDate;
     if (dto.comment !== undefined) doc.comment = dto.comment;
     if (dto.inquiryDate !== undefined) doc.inquiryDate = dto.inquiryDate;
+    if (dto.rfqSource !== undefined) doc.rfqSource = dto.rfqSource;
     // ⭐ 3. Update Status & Assignment
     if (dto.stage) doc.stage = dto.stage;
     if (dto.priority) doc.priority = dto.priority;
