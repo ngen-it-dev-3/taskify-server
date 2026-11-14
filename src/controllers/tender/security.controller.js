@@ -1,5 +1,5 @@
 // src/controllers/tender/security.controller.js
-const mongoose = require("mongoose"); // ✅ Keep this at the top only
+const mongoose = require("mongoose");
 const TenderSecurity = require("../../models/TenderSecurity.model");
 const Tender = require("../../models/Tender.model");
 const { sendSecurityNotification } = require("../../utils/mailer");
@@ -139,27 +139,18 @@ const securityStats = async (_req, res) => {
 const createSecurity = async (req, res) => {
   try {
     const {
-      entity,
-      clientDescription,
-      type,
-      amount,
-      currency,
-      dueDate,
-      docsStatus,
-      documentUrl,
-      tenderId,
-      invoiceNo,      // ✅ NEW
-      invoiceDate,    // ✅ NEW
-      receivedAmount, // ✅ NEW
-      delivery,       // ✅ NEW
+      entity, clientDescription, type, amount, currency, dueDate,
+      docsStatus, tenderId, invoiceNo, invoiceDate, receivedAmount, delivery,
+      purchaseDate, securityClosingDate, purchaseFrom, purchaseType, validityDate
     } = req.body;
 
     if (!entity || !clientDescription || !type) {
-      return res.status(400).json({
-        success: false,
-        message: "entity, clientDescription, and type are required",
-      });
+      return res.status(400).json({ success: false, message: "entity, clientDescription, and type are required" });
     }
+
+    // ✅ req.file থাকলে সেখান থেকে পাথ নিন, অন্যথায় req.body থেকে
+    const documentUrl = req.file ? `/uploads/security-docs/${req.file.filename}` : (req.body.documentUrl || "");
+    const finalDocsStatus = req.file ? "Attached" : (docsStatus || "Missing");
 
     const row = await TenderSecurity.create({
       entity,
@@ -168,16 +159,18 @@ const createSecurity = async (req, res) => {
       amount: Number(amount) || 0,
       currency: currency || "BDT",
       dueDate: dueDate ? new Date(dueDate) : null,
-      docsStatus: docsStatus || "Missing",
-      documentUrl: documentUrl || "",
+      docsStatus: finalDocsStatus,
+      documentUrl: documentUrl,
       tenderId: tenderId || null,
-
-      // ✅ Save the new fields
       invoiceNo: invoiceNo || "No invoice yet",
       invoiceDate: invoiceDate ? new Date(invoiceDate) : null,
       receivedAmount: Number(receivedAmount) || 0,
       delivery: delivery || "Pending",
-
+      purchaseDate: purchaseDate ? new Date(purchaseDate) : null,
+      securityClosingDate: securityClosingDate ? new Date(securityClosingDate) : null,
+      purchaseFrom: purchaseFrom || "",
+      purchaseType: purchaseType || "",
+      validityDate: validityDate ? new Date(validityDate) : null,
       createdBy: req.user._id,
       updatedBy: req.user._id,
     });
@@ -196,35 +189,30 @@ const updateSecurity = async (req, res) => {
   try {
     const row = await TenderSecurity.findById(req.params.id);
     if (!row) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Security record not found" });
+      return res.status(404).json({ success: false, message: "Security record not found" });
     }
 
     const allowed = [
-      "entity",
-      "clientDescription",
-      "type",
-      "amount",
-      "currency",
-      "dueDate",
-      "docsStatus",
-      "documentUrl",
-      "invoiceNo",       // ✅ NEW
-      "invoiceDate",     // ✅ NEW
-      "receivedAmount",  // ✅ NEW
-      "delivery",        // ✅ NEW
+      "entity", "clientDescription", "type", "amount", "currency",
+      "dueDate", "docsStatus", "documentUrl",
+      "invoiceNo", "invoiceDate", "receivedAmount", "delivery",
+      "purchaseDate", "securityClosingDate", "purchaseFrom", "purchaseType", "validityDate"
     ];
 
     for (const k of allowed) {
       if (req.body[k] !== undefined) {
-        // Handle date fields correctly
-        if (k === "dueDate" || k === "invoiceDate") {
+        if (["dueDate", "invoiceDate", "purchaseDate", "securityClosingDate", "validityDate"].includes(k)) {
           row[k] = req.body[k] ? new Date(req.body[k]) : null;
         } else {
           row[k] = req.body[k];
         }
       }
+    }
+
+    // ✅ নতুন ফাইল আপলোড হলে documentUrl আপডেট করুন
+    if (req.file) {
+      row.documentUrl = `/uploads/security-docs/${req.file.filename}`;
+      row.docsStatus = "Attached";
     }
 
     row.updatedBy = req.user._id;
@@ -244,9 +232,7 @@ const deleteSecurity = async (req, res) => {
   try {
     const row = await TenderSecurity.findByIdAndDelete(req.params.id);
     if (!row) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Security record not found" });
+      return res.status(404).json({ success: false, message: "Security record not found" });
     }
     res.json({ success: true, message: "Security record deleted" });
   } catch (error) {
@@ -256,16 +242,14 @@ const deleteSecurity = async (req, res) => {
 };
 
 /* ============================================================
- * NOTIFY FINANCE — send tender security email
+ * NOTIFY FINANCE
  * ============================================================ */
 const notifySecurity = async (req, res) => {
   try {
     const { emails, note } = req.body;
 
     if (!Array.isArray(emails) || emails.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "emails[] is required" });
+      return res.status(400).json({ success: false, message: "emails[] is required" });
     }
 
     const valid = emails
@@ -273,16 +257,12 @@ const notifySecurity = async (req, res) => {
       .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
 
     if (!valid.length) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No valid email addresses" });
+      return res.status(400).json({ success: false, message: "No valid email addresses" });
     }
 
     const security = await TenderSecurity.findById(req.params.id).lean();
     if (!security) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Security record not found" });
+      return res.status(404).json({ success: false, message: "Security record not found" });
     }
 
     let tender = null;
@@ -297,10 +277,6 @@ const notifySecurity = async (req, res) => {
       note: note || "",
       senderName: req.user?.fullName || req.user?.name || "",
     });
-
-    console.log(
-      `[notifySecurity] ✅ sent to ${valid.length} recipient(s) — msgId: ${info.messageId}`,
-    );
 
     res.json({
       success: true,
@@ -318,6 +294,9 @@ const notifySecurity = async (req, res) => {
   }
 };
 
+/* ============================================================
+ * RECORD PAYMENT
+ * ============================================================ */
 const recordPayment = async (req, res) => {
   try {
     const { amount, date, mode, reference, delivery, closeOrder } = req.body;
@@ -334,7 +313,7 @@ const recordPayment = async (req, res) => {
       mode: mode || "Bank transfer",
       reference: reference || "",
       enteredBy: userName,
-      enteredById: userId, // ✅ Just save the ID
+      enteredById: userId,
     };
 
     row.payments.push(newPayment);

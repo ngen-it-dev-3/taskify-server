@@ -5,7 +5,7 @@ const { authenticate } = require("../middleware/auth.middleware");
 
 const tenderCtrl = require("../controllers/tender/tender.controller");
 const submissionCtrl = require("../controllers/tender/submission.controller");
-const securityCtrl = require("../controllers/tender/security.controller");
+const securityCtrl = require("../controllers/tender/security.controller"); // ✅ এটি যোগ করা হয়েছে
 const docCtrl = require("../controllers/tender/companyDoc.controller");
 const overviewCtrl = require("../controllers/tender/overview.controller");
 const settingsCtrl = require("../controllers/tender/settings.controller");
@@ -16,6 +16,7 @@ const {
     advertisementUpload,
     companyDocUpload,
     tenderChatUpload,
+    securityDocUpload, // ✅ এটি যোগ করা হয়েছে
 } = require("../middleware/upload.middleware");
 
 router.use(authenticate);
@@ -31,14 +32,23 @@ router.get("/overview/recent-activity", overviewCtrl.recentActivity);
 router.get("/submissions/list", submissionCtrl.listSubmissions);
 router.get("/submissions/:id", submissionCtrl.getSubmissionDetail);
 
+/* ============================================================
+ * SECURITY ROUTES
+ * ============================================================ */
 router.get("/security/list", securityCtrl.listSecurity);
 router.get("/security/stats", securityCtrl.securityStats);
-router.post("/security", securityCtrl.createSecurity);
-router.patch("/security/:id", securityCtrl.updateSecurity);
+
+// ✅ আপডেট করা রাউট: ফাইল আপলোড মিডলওয়্যারসহ
+router.post("/security", securityDocUpload.single("document"), securityCtrl.createSecurity);
+router.patch("/security/:id", securityDocUpload.single("document"), securityCtrl.updateSecurity);
+
 router.delete("/security/:id", securityCtrl.deleteSecurity);
 router.post("/security/:id/notify", securityCtrl.notifySecurity);
 router.post("/security/:id/pay", securityCtrl.recordPayment);
 
+/* ============================================================
+ * COMPANY DOCS ROUTES
+ * ============================================================ */
 router.get("/docs/list", docCtrl.listDocs);
 router.get("/docs/counts", docCtrl.docCounts);
 router.get("/docs/bundle", docCtrl.listAndCounts);
@@ -47,12 +57,10 @@ router.post("/docs", docCtrl.createDoc);
 router.patch("/docs/:id", docCtrl.updateDoc);
 router.delete("/docs/:id", docCtrl.deleteDoc);
 
-
 // ✅ NEW: Tab Categories
 router.get("/docs/categories", docCtrl.listCategories);
 router.post("/docs/categories", docCtrl.createCategory);
 router.delete("/docs/categories/:id", docCtrl.deleteCategory);
-
 
 router.post(
     "/docs/:id/file",
@@ -73,10 +81,6 @@ router.get("/crawl/last", settingsCtrl.getLastCrawl);
 
 /* ============================================================
  * SITE SOURCES (crawler targets)
- *
- * Order matters:
- *   1. Static paths first (POST /sites/preview)
- *   2. Then /:id paths
  * ============================================================ */
 router.get("/sites", settingsCtrl.listSites);
 router.post("/sites", settingsCtrl.createSite);
@@ -101,7 +105,6 @@ router.post("/", tenderCtrl.createTender);
 
 /* ============================================================
  * TENDER CHAT (SUPPORT) — scoped /:id
- * Placed BEFORE the generic /:id block for clarity.
  * ============================================================ */
 router.get("/chat/inbox", chatCtrl.inbox);
 router.get("/:id/chat", chatCtrl.listMessages);
@@ -137,7 +140,6 @@ router.patch("/:id/sections/:sectionId/todos/:todoId", tenderCtrl.updateTodo);
 router.delete("/:id/sections/:sectionId/todos/:todoId", tenderCtrl.deleteTodo);
 router.post("/:id/sections/apply-template", tenderCtrl.applySectionTemplate);
 
-
 router.post("/:id/notify-finance", tenderCtrl.notifyFinance);
 
 router.post(
@@ -147,10 +149,9 @@ router.post(
 );
 router.delete("/:id/attachments/:attachmentId", tenderCtrl.deleteAttachment);
 
-
 router.post(
     "/:id/agreements",
-    tenderUpload.single("file"), // এখানে tenderUpload ব্যবহার করা হলো
+    tenderUpload.single("file"),
     tenderCtrl.uploadAgreementFile,
 );
 router.get("/:id/agreements/download-zip", tenderCtrl.downloadAgreementZip);
@@ -163,7 +164,6 @@ router.post(
     tenderCtrl.uploadAdvertisement,
 );
 router.delete("/:id/advertisement", tenderCtrl.deleteAdvertisement);
-
 
 /* ============================================================
  * GENERIC /:id — LAST

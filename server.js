@@ -129,6 +129,7 @@ const directories = [
   { path: path.join(uploadsPath, "quotation-sources"), name: "quotation-sources" },
   { path: path.join(uploadsPath, "tender-advertisements"), name: "tender-advertisements" },
   { path: path.join(uploadsPath, "agreements"), name: "agreements" },
+  { path: path.join(uploadsPath, "security-docs"), name: "security-docs" },
 ];
 
 for (const dir of directories) {
@@ -260,6 +261,7 @@ app.use('/api/v1/numbering-settings', numberingSettings);
 app.use("/api/v1/tenant", tenantRoutes);
 app.use("/api/v1/credentials", credentialRoutes);
 app.use("/api/v1/tender-clients", tenderClientRoutes);
+
 
 
 // ==================== HEALTH ====================

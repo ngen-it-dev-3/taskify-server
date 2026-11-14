@@ -185,6 +185,23 @@ const quotationSourceStorage = multer.diskStorage({
   },
 });
 
+// ---------- Security Document uploads ----------
+const securityDocUploadDir = path.join(__dirname, "../../uploads/security-docs");
+fs.mkdirSync(securityDocUploadDir, { recursive: true });
+
+const securityDocStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(securityDocUploadDir, { recursive: true });
+    cb(null, securityDocUploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const id = crypto.randomBytes(8).toString("hex");
+    const ext = path.extname(file.originalname) || "";
+    cb(null, `${Date.now()}-${id}${ext}`);
+  },
+});
+
+
 // ============================================================
 // MULTER INSTANCES
 // ============================================================
@@ -226,6 +243,12 @@ const quotationSourceUpload = multer({
   fileFilter,
 });
 
+
+const securityDocUpload = multer({
+  storage: securityDocStorage,
+  limits: { fileSize: 15 * 1024 * 1024, files: 1 },
+  fileFilter,
+});
 // ============================================================
 // HELPERS
 // ============================================================
@@ -317,7 +340,7 @@ module.exports = {
   // ⭐ Quotation Sources (NEW)
   quotationSourceUpload,
   quotationSourceUploadDir,
-
+  securityDocUpload,
   // Utilities
   getFileType,
   getFileIcon,
