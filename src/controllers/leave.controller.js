@@ -163,24 +163,52 @@ const getMyLeaves = async (req, res) => {
 };
 
 // Get all leave requests (Admin/HR)
+// Get all leave requests (Admin/HR)
 const getAllLeaves = async (req, res) => {
   try {
-    const { status, type, departmentId, startDate, endDate, search } =
-      req.query;
+    const { status, type, departmentId, startDate, endDate, search, employeeId, month, year } = req.query;
 
     const query = {};
 
     if (status) query.status = status;
     if (type) query.type = type;
     if (departmentId) query.departmentId = departmentId;
-    if (startDate) query.startDate = { $gte: new Date(startDate) };
-    if (endDate) query.endDate = { $lte: new Date(endDate) };
-    if (search) {
+
+    // ⭐ নতুন ফিল্টার: এমপ্লয়ি এবং মাস অনুযায়ী
+    if (employeeId) {
+      query.employeeId = employeeId;
+    }
+
+    if (month !== undefined && year !== undefined) {
+      const startOfMonth = new Date(parseInt(year), parseInt(month), 1);
+      const endOfMonth = new Date(parseInt(year), parseInt(month) + 1, 0, 23, 59, 59, 999);
+
+      // লিভটি যদি মাসের ভেতরে শুরু, শেষ বা ওভারল্যাপ করে
       query.$or = [
+        { startDate: { $gte: startOfMonth, $lte: endOfMonth } },
+        { endDate: { $gte: startOfMonth, $lte: endOfMonth } },
+        { startDate: { $lte: startOfMonth }, endDate: { $gte: endOfMonth } }
+      ];
+    } else {
+      // পুরনো ফিল্টার (যদি month/year না থাকে)
+      if (startDate) query.startDate = { $gte: new Date(startDate) };
+      if (endDate) query.endDate = { $lte: new Date(endDate) };
+    }
+
+    if (search) {
+      // ⭐ যদি সার্চ করা হয়, তবে আগের $or মুছে নতুন $or বসাতে হবে
+      const searchOr = [
         { employeeName: { $regex: search, $options: "i" } },
         { employeeEmail: { $regex: search, $options: "i" } },
         { departmentName: { $regex: search, $options: "i" } },
       ];
+
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: searchOr }];
+        delete query.$or;
+      } else {
+        query.$or = searchOr;
+      }
     }
 
     const leaves = await Leave.find(query)
