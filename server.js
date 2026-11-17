@@ -29,7 +29,7 @@ app.set("trust proxy", 1);
 // ==================== CRON IMPORTS ====================
 const TenderSettings = require("./src/models/TenderSettings.model");
 const { runCrawlInternal } = require("./src/services/crawlScheduler.service");
-
+const { RFQService } = require("./src/services/rfq/rfq.service");
 // ==================== SOCKET.IO ====================
 // আপনার কাস্টম ফাংশনটি কল করা হচ্ছে (এখানে server পাস করতে হবে)
 const { initializeSocket } = require("./src/socket/index");
@@ -387,6 +387,24 @@ function startCrawlCron() {
   console.log("✅ Cron scheduler started (daily tender crawl)");
 }
 
+// ⭐ নতুন RFQ Sync Cron
+function startRfqSyncCron() {
+  // "* * * * *" মানে প্রতি ১ মিনিটে একবার রান হবে
+  cron.schedule("* * * * *", async () => {
+    try {
+      // রিকোয়েস্ট লগে স্প্যাম এড়াতে চাইলে চাইলে এখানে কন্ডিশন দিতে পারেন
+      const result = await RFQService.syncFromWebPortal();
+
+      // যদি নতুন ডাটা সিঙ্ক হয় তবেই কনসোলে প্রিন্ট করবে
+      if (result.synced > 0) {
+        console.log(`[RFQ Cron] Successfully auto-synced ${result.synced} RFQs from NGEN Web Portal.`);
+      }
+    } catch (err) {
+      console.error("[RFQ Cron] Sync failed:", err.message);
+    }
+  });
+  console.log("✅ RFQ Auto-Sync Cron started (every 1 minute)");
+}
 // ==================== START SERVER ====================
 const PORT = process.env.PORT || 5000;
 
@@ -406,6 +424,7 @@ const startServer = async () => {
 
   if (dbConnected) {
     startCrawlCron();
+    startRfqSyncCron();
   } else {
     console.warn("⚠️  Cron skipped (no DB)");
   }

@@ -34,6 +34,8 @@ const AddressSchema = new mongoose.Schema(
 const RFQSchema = new mongoose.Schema(
     {
         rfqNumber: { type: String, required: true, unique: true, index: true },
+        ngen_id: { type: String, unique: true, sparse: true, index: true },
+        ngen_updated_at: { type: Date },
         source: {
             type: String,
             enum: ['online', 'manual'],

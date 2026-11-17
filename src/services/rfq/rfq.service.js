@@ -1,5 +1,5 @@
 // src/services/rfq/rfq.service.js
-
+const axios = require('axios');
 const RFQ = require('../../models/rfq/RFQ');
 const Counter = require('../../models/rfq/Counter');
 const { ApiError } = require('../../utils/rfq/ApiError');
@@ -243,14 +243,17 @@ const RFQService = {
   },
 
   // ---------- LIST ----------
+  // ---------- LIST ----------
   async list(q, includeArchived) {
     const page = Number(q.page) || 1;
     const limit = Math.min(Number(q.limit) || 20, 100);
     const skip = (page - 1) * limit;
 
     const filter = buildFilter(q, includeArchived);
+
+    // ⭐ সমাধান: লেটেস্ট ইনকোয়ারি ডেটা বা তারিখ অনুযায়ী সাজানোর জন্য 'inquiryDate' বা 'createdAt' ব্যবহার করা
     const sort = {};
-    const sortBy = q.sortBy || 'createdAt';
+    const sortBy = q.sortBy || 'inquiryDate'; // createdAt এর বদলে inquiryDate বা date দিয়ে ডিফল্ট সর্ট করা হলো
     sort[sortBy] = q.sortOrder === 'asc' ? 1 : -1;
 
     const [items, total] = await Promise.all([
@@ -488,7 +491,156 @@ const RFQService = {
 
   // ---------- SYNC ----------
   async syncFromWebPortal() {
-    return { synced: 0, message: 'Sync endpoint not yet configured.' };
+    const API_URL = process.env.NGEN_API_URL;
+    const API_TOKEN = process.env.NGEN_API_TOKEN;
+
+    if (!API_URL || !API_TOKEN) {
+      throw new Error('NGEN_API_URL or NGEN_API_TOKEN is missing in .env');
+    }
+
+    let page = 1;
+    let hasNextPage = true;
+    let syncedCount = 0;
+    let syncedItems = [];
+
+    // ⭐ সমাধান: ডাটাবেজ থেকে সর্বশেষ সিঙ্ক হওয়া রেকর্ডটির সময় বের করা (Incremental Sync)
+    let updatedAfter = null;
+    const lastRecord = await RFQ.findOne({ ngen_id: { $exists: true } }).sort({ ngen_updated_at: -1 });
+    
+    if (lastRecord && lastRecord.ngen_updated_at) {
+      // ২ মিনিট ওভারল্যাপ টাইমসহ ISO স্ট্রিং তৈরি করা যাতে কোনো আপডেট মিস না হয়
+      const overlapTime = new Date(lastRecord.ngen_updated_at.getTime() - 2 * 60000);
+      updatedAfter = overlapTime.toISOString();
+    }
+
+    while (hasNextPage) {
+      try {
+        const response = await axios.get(`${API_URL}/rfqs`, {
+          headers: {
+            Authorization: `Bearer ${API_TOKEN}`,
+            Accept: 'application/json',
+          },
+          params: {
+            page,
+            limit: 100,
+            ...(updatedAfter ? { updatedAfter } : {}), // 👈 নতুন বা আপডেট হওয়া ডেটা ফিল্টার করবে
+          },
+          timeout: 60000,
+        });
+
+        const payload = response.data;
+        const records = payload.data || [];
+
+        // যদি কোনো নতুন রেকর্ড না থাকে, তবে লুপ ভেঙে বের হয়ে যাবো
+        if (records.length === 0) {
+          hasNextPage = false;
+          break;
+        }
+
+        for (const record of records) {
+          const savedData = await this.upsertNgenRfq(record);
+          syncedCount++;
+          if (savedData) {
+            syncedItems.push(savedData);
+          }
+        }
+
+        hasNextPage = payload.pagination?.hasNextPage || false;
+        page++;
+      } catch (error) {
+        console.error('❌ NGEN Sync Error:', error.response?.data || error.message);
+        throw new Error('Failed to sync from NGEN API');
+      }
+    }
+
+    return {
+      synced: syncedCount,
+      items: syncedItems,
+      message: `Successfully synced ${syncedCount} new/updated records.`
+    };
+  },
+
+  // ⭐ Helper: NGEN এর ডাটাকে আপনার DB ফরম্যাটে রূপান্তর ও সেভ করা
+  async upsertNgenRfq(r) {
+    console.log("👉 Raw NGEN Data:", r);
+    const createdAtDate = r.createdAt ? new Date(r.createdAt) : new Date();
+    const dateStr = createdAtDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const timeStr = createdAtDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+    const updateData = {
+      ngen_id: String(r._id), // 👈 এই লাইনটি মিসিং ছিল, এটি অবশ্যই দিতে হবে!
+      rfqNumber: r.rfqNumber ? `${r.rfqNumber}-${r._id}` : `NGEN-${r._id}`,
+      company: r.company || r.clientName || 'Unknown Company',
+      country: r.country || r.clientCountry || 'Unknown',
+      date: dateStr,
+      time: timeStr,
+      inquiryDate: r.inquiryDate || r.date,
+      stage: r.stage || 'pending',
+      priority: r.priority || 'normal',
+      salesman: r.salesman || 'Unassigned',
+      assignedTo: r.assignedTo || 'Unassigned',
+      contactName: r.contactName || 'Unknown',
+      email: r.email || 'unknown@example.com',
+      phone: r.phone || '',
+      designation: r.designation || '',
+      address: r.address || '',
+      city: r.city || '',
+      zipCode: r.zipCode || '',
+      isReseller: r.isReseller || false,
+      projectName: r.projectName || '',
+      tentativeBudget: r.tentativeBudget || '',
+      currentProjectStatus: r.currentProjectStatus || '',
+      tentativePurchaseDate: r.tentativePurchaseDate || '',
+      comment: r.comment || '',
+      source: 'online',
+      receivedVia: 'Other',
+      ngen_updated_at: r.updatedAt ? new Date(r.updatedAt) : new Date(),
+
+      // Nested objects
+      shipping: r.shipping ? {
+        companyName: r.shipping.company || '',
+        contactName: r.shipping.name || '',
+        email: r.shipping.email || '',
+        phone: r.shipping.phone || '',
+        address: r.shipping.address || '',
+        country: r.shipping.country || '',
+        city: r.shipping.city || '',
+        zipCode: r.shipping.zipCode || '',
+      } : undefined,
+
+      endUser: r.endUser ? {
+        companyName: r.endUser.company || '',
+        contactName: r.endUser.name || '',
+        email: r.endUser.email || '',
+        phone: r.endUser.phone || '',
+        address: r.endUser.address || '',
+        country: r.endUser.country || '',
+        city: r.endUser.city || '',
+        zipCode: r.endUser.zipCode || '',
+      } : undefined,
+
+      // Products array
+      products: (r.products || []).map((p, i) => ({
+        sl: p.sl || i + 1,
+        name: p.name || 'Unknown Product',
+        qty: p.qty || 1,
+        spec: p.spec || '',
+        sku: p.sku || '',
+        modelNo: p.modelNo || '',
+        brand: p.brand || '',
+        description: p.description || '',
+        additionalInfo: p.additionalInfo || '',
+        files: [],
+      }))
+    };
+
+    // ⭐ IDEMPOTENT UPSERT: ngen_id দিয়ে খুঁজবে, না পেলে তৈরি করবে এবং পেলে আপডেট করবে
+    await RFQ.updateOne(
+      { ngen_id: String(r._id) },
+      { $set: updateData },
+      { upsert: true }
+    );
+    return updateData;
   },
 };
 

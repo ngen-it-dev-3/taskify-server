@@ -163,40 +163,53 @@ const getMyLeaves = async (req, res) => {
 };
 
 // Get all leave requests (Admin/HR)
-// Get all leave requests (Admin/HR)
 const getAllLeaves = async (req, res) => {
   try {
     const { status, type, departmentId, startDate, endDate, search, employeeId, month, year } = req.query;
 
-    const query = {};
+    let query = {};
 
     if (status) query.status = status;
     if (type) query.type = type;
     if (departmentId) query.departmentId = departmentId;
 
-    // ⭐ নতুন ফিল্টার: এমপ্লয়ি এবং মাস অনুযায়ী
+    // ⭐ এমপ্লয়ি ফিল্টার (সঠিকভাবে ObjectId কনভার্ট করে)
     if (employeeId) {
-      query.employeeId = employeeId;
+      if (mongoose.Types.ObjectId.isValid(employeeId)) {
+        query.employeeId = new mongoose.Types.ObjectId(employeeId);
+      } else {
+        // যদি employeeId ভ্যালিড ObjectId না হয়, তবে employeeName বা employeeEmail দিয়ে খুঁজব
+        query.$or = [
+          { employeeName: employeeId },
+          { employeeEmail: employeeId }
+        ];
+      }
     }
 
+    // ⭐ মাস ও বছর অনুযায়ী ফিল্টার
     if (month !== undefined && year !== undefined) {
       const startOfMonth = new Date(parseInt(year), parseInt(month), 1);
       const endOfMonth = new Date(parseInt(year), parseInt(month) + 1, 0, 23, 59, 59, 999);
 
       // লিভটি যদি মাসের ভেতরে শুরু, শেষ বা ওভারল্যাপ করে
-      query.$or = [
+      const dateFilter = [
         { startDate: { $gte: startOfMonth, $lte: endOfMonth } },
         { endDate: { $gte: startOfMonth, $lte: endOfMonth } },
         { startDate: { $lte: startOfMonth }, endDate: { $gte: endOfMonth } }
       ];
+
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: dateFilter }];
+        delete query.$or;
+      } else {
+        query.$or = dateFilter;
+      }
     } else {
-      // পুরনো ফিল্টার (যদি month/year না থাকে)
       if (startDate) query.startDate = { $gte: new Date(startDate) };
       if (endDate) query.endDate = { $lte: new Date(endDate) };
     }
 
     if (search) {
-      // ⭐ যদি সার্চ করা হয়, তবে আগের $or মুছে নতুন $or বসাতে হবে
       const searchOr = [
         { employeeName: { $regex: search, $options: "i" } },
         { employeeEmail: { $regex: search, $options: "i" } },
@@ -204,8 +217,12 @@ const getAllLeaves = async (req, res) => {
       ];
 
       if (query.$or) {
-        query.$and = [{ $or: query.$or }, { $or: searchOr }];
-        delete query.$or;
+        if (query.$and) {
+          query.$and.push({ $or: searchOr });
+        } else {
+          query.$and = [{ $or: query.$or }, { $or: searchOr }];
+          delete query.$or;
+        }
       } else {
         query.$or = searchOr;
       }
