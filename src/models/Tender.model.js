@@ -101,7 +101,8 @@ const TenderSchema = new mongoose.Schema(
     recordedBy: { type: String, default: "" },
     responsiblePerson: { type: String, default: "" },
     description: { type: String, default: "" },
-
+    clientAddress: { type: String, default: "" },
+    clientEmail: { type: String, default: "", trim: true, lowercase: true },
     /* 🟢 NEW: Source Site (crawler identified site name) */
     sourceSite: { type: String, default: "", trim: true, index: true },
 
@@ -187,7 +188,7 @@ const TenderSchema = new mongoose.Schema(
         isUs: { type: Boolean, default: false },
       },
     ],
-    
+
     /* NEW: Agreement & Delivery Files ---------- */
     agreementFiles: [
       {

@@ -144,6 +144,8 @@ const createTender = async (req, res) => {
       scheduleValue,
       purchaseFrom,
       purchaseType,
+      clientAddress,
+      clientEmail,
     } = req.body;
 
     if (!tenderer?.trim() || !title?.trim()) {
@@ -186,7 +188,8 @@ const createTender = async (req, res) => {
       scheduleValue: Number(scheduleValue) || 0,
       purchaseFrom: purchaseFrom || "",
       purchaseType: purchaseType || "",
-
+      clientAddress: clientAddress || "",
+      clientEmail: clientEmail || "",
       owner: req.user._id,
       departmentId: req.user.departmentId,
       createdBy: req.user._id,
@@ -271,6 +274,8 @@ const updateTender = async (req, res) => {
       "scheduleValue",
       "purchaseFrom",
       "purchaseType",
+      "clientAddress",
+      "clientEmail",
     ];
 
     for (const k of allowed) {
