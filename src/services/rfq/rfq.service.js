@@ -562,7 +562,6 @@ const RFQService = {
 
   // ⭐ Helper: NGEN এর ডাটাকে আপনার DB ফরম্যাটে রূপান্তর ও সেভ করা
   async upsertNgenRfq(r) {
-    console.log("👉 Raw NGEN Data:", r);
     const createdAtDate = r.createdAt ? new Date(r.createdAt) : new Date();
     const dateStr = createdAtDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     const timeStr = createdAtDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });

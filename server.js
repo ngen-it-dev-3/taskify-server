@@ -30,6 +30,9 @@ app.set("trust proxy", 1);
 const TenderSettings = require("./src/models/TenderSettings.model");
 const { runCrawlInternal } = require("./src/services/crawlScheduler.service");
 const { RFQService } = require("./src/services/rfq/rfq.service");
+
+const { startZKSync } = require("./src/services/zkSyncService");
+
 // ==================== SOCKET.IO ====================
 // আপনার কাস্টম ফাংশনটি কল করা হচ্ছে (এখানে server পাস করতে হবে)
 const { initializeSocket } = require("./src/socket/index");
@@ -425,10 +428,10 @@ const startServer = async () => {
   if (dbConnected) {
     startCrawlCron();
     startRfqSyncCron();
+    startZKSync();
   } else {
     console.warn("⚠️  Cron skipped (no DB)");
   }
-
   // cPanel/Passenger এর জন্য app.listen ব্যবহার করা বাধ্যতামূলক
   app.listen(PORT, () => {
     console.log(`\n📡 Server:          http://localhost:${PORT}`);

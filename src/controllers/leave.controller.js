@@ -147,6 +147,8 @@ const getMyLeaves = async (req, res) => {
 
     const leaves = await Leave.find(query)
       .sort({ createdAt: -1 })
+      // 👇 populate এ employeeId (কাস্টম AD001) এবং _id দুটোই যুক্ত করা হলো
+      .populate("employeeId", "fullName email role departmentId employeeId _id")
       .populate("approvedBy", "fullName email");
 
     res.json({
@@ -162,7 +164,6 @@ const getMyLeaves = async (req, res) => {
   }
 };
 
-// Get all leave requests (Admin/HR)
 const getAllLeaves = async (req, res) => {
   try {
     const { status, type, departmentId, startDate, endDate, search, employeeId, month, year } = req.query;
@@ -173,12 +174,10 @@ const getAllLeaves = async (req, res) => {
     if (type) query.type = type;
     if (departmentId) query.departmentId = departmentId;
 
-    // ⭐ এমপ্লয়ি ফিল্টার (সঠিকভাবে ObjectId কনভার্ট করে)
     if (employeeId) {
       if (mongoose.Types.ObjectId.isValid(employeeId)) {
         query.employeeId = new mongoose.Types.ObjectId(employeeId);
       } else {
-        // যদি employeeId ভ্যালিড ObjectId না হয়, তবে employeeName বা employeeEmail দিয়ে খুঁজব
         query.$or = [
           { employeeName: employeeId },
           { employeeEmail: employeeId }
@@ -186,12 +185,10 @@ const getAllLeaves = async (req, res) => {
       }
     }
 
-    // ⭐ মাস ও বছর অনুযায়ী ফিল্টার
     if (month !== undefined && year !== undefined) {
       const startOfMonth = new Date(parseInt(year), parseInt(month), 1);
       const endOfMonth = new Date(parseInt(year), parseInt(month) + 1, 0, 23, 59, 59, 999);
 
-      // লিভটি যদি মাসের ভেতরে শুরু, শেষ বা ওভারল্যাপ করে
       const dateFilter = [
         { startDate: { $gte: startOfMonth, $lte: endOfMonth } },
         { endDate: { $gte: startOfMonth, $lte: endOfMonth } },
@@ -230,7 +227,12 @@ const getAllLeaves = async (req, res) => {
 
     const leaves = await Leave.find(query)
       .sort({ createdAt: -1 })
-      .populate("employeeId", "fullName email employeeId")
+      // 👇 IMPORTANT: employeeId এর ভেতরে সবকিছু populate করুন
+      .populate({
+        path: "employeeId",
+        select: "fullName email role departmentId employeeId _id",
+        options: { strictPopulate: false }
+      })
       .populate("approvedBy", "fullName email");
 
     res.json({
@@ -432,11 +434,12 @@ const updateLeaveStatus = async (req, res) => {
   }
 };
 
-// Delete leave request (Employee can delete pending requests)
+// Delete leave request (Employee can delete pending requests, Admin can delete ANY)
 const deleteLeaveRequest = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user._id;
+    const userRole = req.user.role; // ✅ ইউজারের রোল চেক করছি
 
     const leave = await Leave.findById(id);
     if (!leave) {
@@ -446,14 +449,14 @@ const deleteLeaveRequest = async (req, res) => {
       });
     }
 
-    // Only allow deletion of pending requests by the employee who created it
-    if (
-      leave.employeeId.toString() !== userId.toString() &&
-      leave.status !== "pending"
-    ) {
+    // ✅ Fix: অ্যাডমিন/এইচআর সব ডিলিট করতে পারবে, সাধারণ এমপ্লয়ি শুধু নিজের Pending ডিলিট করতে পারবে
+    const isAdminOrHR = ["admin", "super_admin", "hr_manager"].includes(userRole);
+    const isOwnerAndPending = leave.employeeId.toString() === userId.toString() && leave.status === "pending";
+
+    if (!isAdminOrHR && !isOwnerAndPending) {
       return res.status(403).json({
         success: false,
-        message: "You can only delete your own pending leave requests",
+        message: "You do not have permission to delete this leave request",
       });
     }
 
@@ -461,11 +464,10 @@ const deleteLeaveRequest = async (req, res) => {
 
     // ============ SEND CANCELLATION NOTIFICATION ============
     try {
-      const employee = await User.findById(userId).select("_id fullName email");
+      const employee = await User.findById(leave.employeeId).select("_id fullName email"); // ✅ লিভের মালিককে নোটিফিকেশন পাঠাচ্ছি
       await LeaveNotificationService.sendLeaveCancelled(leave, employee);
     } catch (notifError) {
       console.error("Notification error:", notifError);
-      // Don't fail the request if notification fails
     }
 
     res.json({
@@ -544,24 +546,18 @@ const getLeaveBalances = async (req, res) => {
   }
 };
 
-// Get all users for substitute selection
 const getAvailableSubstitutes = async (req, res) => {
   try {
     const userId = req.user._id;
-
-    // Get users from same department or all users
-    const user = await User.findById(userId);
+    
+    // 👇 শুধু নিজে বাদে বাকি সব অ্যাক্টিভ ইউজারকে দেখাবে
     const query = {
       _id: { $ne: userId },
       isActive: true,
     };
 
-    if (user.departmentId) {
-      query.departmentId = user.departmentId;
-    }
-
     const substitutes = await User.find(query)
-      .select("_id fullName email role departmentId")
+      .select("_id fullName email role departmentId employeeId") 
       .populate("departmentId", "name");
 
     res.json({

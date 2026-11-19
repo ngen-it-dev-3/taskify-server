@@ -387,7 +387,7 @@ const getAllAttendance = async (req, res) => {
       department,
       status,
       search,
-      limit = 50,
+      limit = 200,
       page = 1,
     } = req.query;
 
@@ -468,7 +468,7 @@ const getAttendanceStats = async (req, res) => {
     const present = todayAttendance.filter(
       (a) => a.status === attendanceStatus.PRESENT,
     ).length;
-    const absent = totalEmployees - todayAttendance.length;
+    const absent = Math.max(0, totalEmployees - todayAttendance.length);
     const late = todayAttendance.filter(
       (a) => a.status === attendanceStatus.LATE,
     ).length;
