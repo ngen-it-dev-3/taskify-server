@@ -1,13 +1,10 @@
 const mongoose = require("mongoose");
 
 const leaveTypes = {
+  SICK: "sick",
   CASUAL: "casual",
   EARNED: "earned",
-  SICK: "sick",
-  MATERNITY: "maternity",
-  PATERNITY: "paternity",
-  UNPAID: "unpaid",
-  OTHER: "other",
+  HALF_DAY: "half_day",
 };
 
 const leaveStatus = {
@@ -19,7 +16,6 @@ const leaveStatus = {
 
 const leaveSchema = new mongoose.Schema(
   {
-    // Employee Information
     employeeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -36,7 +32,6 @@ const leaveSchema = new mongoose.Schema(
     },
     departmentName: { type: String, default: "Unassigned" },
 
-    // Leave Details
     type: {
       type: String,
       enum: Object.values(leaveTypes),
@@ -52,13 +47,11 @@ const leaveSchema = new mongoose.Schema(
       default: null,
     },
 
-    // Leave Validation
     isPreviousDayOff: { type: Boolean, default: false },
     isNextDayOff: { type: Boolean, default: false },
     isGovernmentHoliday: { type: Boolean, default: false },
     holidayNote: { type: String, default: "" },
 
-    // Substitute / Backup
     substituteId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -67,7 +60,6 @@ const leaveSchema = new mongoose.Schema(
     substituteEmail: { type: String },
     substituteApproved: { type: Boolean, default: false },
 
-    // Contact Information
     contactDuringLeave: { type: String },
     emergencyContact: {
       name: { type: String, default: "" },
@@ -75,16 +67,13 @@ const leaveSchema = new mongoose.Schema(
       relation: { type: String, default: "" },
     },
 
-    // Reason & Details
     reason: { type: String, required: true },
     additionalDetails: { type: String, default: "" },
 
-    // Signature
     signature: { type: String },
     signatureText: { type: String },
     signedAt: { type: Date },
 
-    // Status & Review
     status: {
       type: String,
       enum: Object.values(leaveStatus),
@@ -98,24 +87,19 @@ const leaveSchema = new mongoose.Schema(
     approvedAt: { type: Date },
     rejectionReason: { type: String },
 
-    // Notification Tracking
     notificationsSent: {
       applied: { type: Boolean, default: false },
       approved: { type: Boolean, default: false },
       rejected: { type: Boolean, default: false },
     },
 
-    // Attachments
     attachments: [{ type: String }],
-
-    // Timestamps
     appliedAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
   },
-  { timestamps: true },
+  { timestamps: true }
 );
 
-// Indexes
 leaveSchema.index({ employeeId: 1 });
 leaveSchema.index({ departmentId: 1 });
 leaveSchema.index({ status: 1 });

@@ -34,6 +34,12 @@ const AddressSchema = new mongoose.Schema(
 const RFQSchema = new mongoose.Schema(
     {
         rfqNumber: { type: String, required: true, unique: true, index: true },
+        rfqReferenceId: {
+            type: String,
+            trim: true,
+            default: '',
+            index: true,
+        },
         ngen_id: { type: String, unique: true, sparse: true, index: true },
         ngen_updated_at: { type: Date },
         source: {
@@ -107,11 +113,14 @@ const RFQSchema = new mongoose.Schema(
 );
 
 // ---- Text search index ----
-RFQSchema.index({ company: 'text', rfqNumber: 'text', email: 'text' });
+RFQSchema.index({ company: 'text', rfqNumber: 'text', email: 'text', rfqReferenceId: 'text', });
 RFQSchema.index({ stage: 1, country: 1, createdAt: -1 });
 
 // ---- Auto-compute agingDays before save ----
 RFQSchema.pre('save', function (next) {
+    if (!this.rfqReferenceId && this.rfqNumber) {
+        this.rfqReferenceId = `REF-${this.rfqNumber}`;
+    }
     // const created = this.createdAt || new Date();
     const created = this.inquiryDate || this.createdAt || new Date();
     const diffMs = Date.now() - new Date(created).getTime();

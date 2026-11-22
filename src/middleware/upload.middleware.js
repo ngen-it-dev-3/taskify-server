@@ -201,6 +201,30 @@ const securityDocStorage = multer.diskStorage({
   },
 });
 
+// ---------- Employee Docs uploads ----------
+const employeeDocUploadDir = path.join(
+  __dirname,
+  "../../uploads/employee-docs",
+);
+fs.mkdirSync(employeeDocUploadDir, { recursive: true });
+
+const employeeDocStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(employeeDocUploadDir, { recursive: true });
+    cb(null, employeeDocUploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const id = crypto.randomBytes(8).toString("hex");
+    const ext = path.extname(file.originalname) || "";
+    const base =
+      path
+        .basename(file.originalname, ext)
+        .replace(/[^\w.\-]+/g, "_")
+        .slice(0, 60) || "doc";
+    cb(null, `${Date.now()}-${id}-${base}${ext}`);
+  },
+});
+
 
 // ============================================================
 // MULTER INSTANCES
@@ -313,6 +337,12 @@ const getFileIcon = (mimeType) => {
   return "file";
 };
 
+const employeeDocUpload = multer({
+  storage: employeeDocStorage,
+  limits: { fileSize: 15 * 1024 * 1024, files: 1 }, // 15MB
+  fileFilter: (_req, _file, cb) => cb(null, true),
+});
+
 // ============================================================
 // EXPORTS
 // ============================================================
@@ -344,4 +374,6 @@ module.exports = {
   // Utilities
   getFileType,
   getFileIcon,
+  employeeDocUpload,
+  employeeDocUploadDir,
 };

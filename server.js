@@ -133,6 +133,7 @@ const directories = [
   { path: path.join(uploadsPath, "tender-advertisements"), name: "tender-advertisements" },
   { path: path.join(uploadsPath, "agreements"), name: "agreements" },
   { path: path.join(uploadsPath, "security-docs"), name: "security-docs" },
+  { path: path.join(uploadsPath, "employee-docs"), name: "employee-docs" },
 ];
 
 for (const dir of directories) {
@@ -218,6 +219,7 @@ const numberingSettings = require('./src/routes/onlineCrm/numberingSettings.rout
 const tenantRoutes = require("./src/routes/tenant.routes");
 const credentialRoutes = require("./src/routes/credential.routes");
 const tenderClientRoutes = require("./src/routes/tenderClient.routes");
+const employeeFileRoutes = require("./src/routes/employeeFile.routes");
 
 
 app.use("/api/v1/auth", authRoutes);
@@ -264,7 +266,7 @@ app.use('/api/v1/numbering-settings', numberingSettings);
 app.use("/api/v1/tenant", tenantRoutes);
 app.use("/api/v1/credentials", credentialRoutes);
 app.use("/api/v1/tender-clients", tenderClientRoutes);
-
+app.use("/api/v1/employee-files", employeeFileRoutes);
 
 
 // ==================== HEALTH ====================

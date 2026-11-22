@@ -24,6 +24,13 @@ function formatDisplayName(name) {
 }
 
 // ============================================================
+// ⭐ HELPER: Escape regex special characters safely
+// ============================================================
+function escapeRegex(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ============================================================
 // EMAIL SENDER — wraps sendMail with logging + safe-fail
 // ============================================================
 async function sendMailSafe(opts) {
@@ -65,6 +72,7 @@ function toClientShape(doc) {
   return {
     id: d._id.toString(),
     rfqNumber: d.rfqNumber,
+    rfqReferenceId: d.rfqReferenceId || '',
     company: d.company,
     country: d.country,
     date: d.date,
@@ -129,8 +137,13 @@ function buildFilter(q, includeArchived) {
   if (q.source) filter.source = q.source;
 
   if (q.search) {
-    const re = new RegExp(q.search, 'i');
-    filter.$or = [{ company: re }, { rfqNumber: re }, { email: re }];
+    const re = new RegExp(escapeRegex(q.search.trim()), 'i');
+    filter.$or = [
+      { company: re },
+      { rfqNumber: re },
+      { rfqReferenceId: re },
+      { email: re },
+    ];
   }
 
   if (q.dateFrom || q.dateTo) {
@@ -192,6 +205,7 @@ const RFQService = {
 
     const doc = new RFQ({
       rfqNumber,
+      rfqReferenceId: dto.rfqReferenceId ? String(dto.rfqReferenceId).trim() : '',
       source: dto.source || 'manual',
       company: dto.company,
       country: dto.country,
@@ -243,7 +257,6 @@ const RFQService = {
   },
 
   // ---------- LIST ----------
-  // ---------- LIST ----------
   async list(q, includeArchived) {
     const page = Number(q.page) || 1;
     const limit = Math.min(Number(q.limit) || 20, 100);
@@ -251,9 +264,9 @@ const RFQService = {
 
     const filter = buildFilter(q, includeArchived);
 
-    // ⭐ সমাধান: লেটেস্ট ইনকোয়ারি ডেটা বা তারিখ অনুযায়ী সাজানোর জন্য 'inquiryDate' বা 'createdAt' ব্যবহার করা
+    // ⭐ সমাধান: লেটেস্ট ইনকোয়ারি ডেটা বা তারিখ অনুযায়ী সাজানোর জন্য 'inquiryDate' বা 'createdAt' ব্যবহার করা
     const sort = {};
-    const sortBy = q.sortBy || 'inquiryDate'; // createdAt এর বদলে inquiryDate বা date দিয়ে ডিফল্ট সর্ট করা হলো
+    const sortBy = q.sortBy || 'inquiryDate';
     sort[sortBy] = q.sortOrder === 'asc' ? 1 : -1;
 
     const [items, total] = await Promise.all([
@@ -363,6 +376,10 @@ const RFQService = {
     if (dto.comment !== undefined) doc.comment = dto.comment;
     if (dto.inquiryDate !== undefined) doc.inquiryDate = dto.inquiryDate;
     if (dto.rfqSource !== undefined) doc.rfqSource = dto.rfqSource;
+    if (dto.rfqReferenceId !== undefined) {
+      doc.rfqReferenceId = String(dto.rfqReferenceId).trim();
+    }
+
     // ⭐ 3. Update Status & Assignment
     if (dto.stage) doc.stage = dto.stage;
     if (dto.priority) doc.priority = dto.priority;
@@ -450,7 +467,7 @@ const RFQService = {
       RFQ.find({})
         .sort({ createdAt: -1 })
         .limit(5)
-        .select('company rfqNumber createdAt'),
+        .select('company rfqNumber rfqReferenceId createdAt'),
     ]);
 
     const quoteRate = total > 0 ? Math.round((quoted / total) * 100) : 0;
@@ -477,7 +494,7 @@ const RFQService = {
       byCountry: byCountry.map((c) => ({
         country: formatDisplayName(c._id),
         count: c.count,
-        pct: Math.round((c.count / total) * 100),
+        pct: total > 0 ? Math.round((c.count / total) * 100) : 0,
       })),
 
       bySalesman: bySalesman.map((s) => ({
@@ -503,12 +520,12 @@ const RFQService = {
     let syncedCount = 0;
     let syncedItems = [];
 
-    // ⭐ সমাধান: ডাটাবেজ থেকে সর্বশেষ সিঙ্ক হওয়া রেকর্ডটির সময় বের করা (Incremental Sync)
+    // ⭐ সমাধান: ডাটাবেজ থেকে সর্বশেষ সিঙ্ক হওয়া রেকর্ডটির সময় বের করা (Incremental Sync)
     let updatedAfter = null;
     const lastRecord = await RFQ.findOne({ ngen_id: { $exists: true } }).sort({ ngen_updated_at: -1 });
-    
+
     if (lastRecord && lastRecord.ngen_updated_at) {
-      // ২ মিনিট ওভারল্যাপ টাইমসহ ISO স্ট্রিং তৈরি করা যাতে কোনো আপডেট মিস না হয়
+      // ২ মিনিট ওভারল্যাপ টাইমসহ ISO স্ট্রিং তৈরি করা যাতে কোনো আপডেট মিস না হয়
       const overlapTime = new Date(lastRecord.ngen_updated_at.getTime() - 2 * 60000);
       updatedAfter = overlapTime.toISOString();
     }
@@ -523,7 +540,7 @@ const RFQService = {
           params: {
             page,
             limit: 100,
-            ...(updatedAfter ? { updatedAfter } : {}), // 👈 নতুন বা আপডেট হওয়া ডেটা ফিল্টার করবে
+            ...(updatedAfter ? { updatedAfter } : {}), // 👈 নতুন বা আপডেট হওয়া ডেটা ফিল্টার করবে
           },
           timeout: 60000,
         });
@@ -531,7 +548,7 @@ const RFQService = {
         const payload = response.data;
         const records = payload.data || [];
 
-        // যদি কোনো নতুন রেকর্ড না থাকে, তবে লুপ ভেঙে বের হয়ে যাবো
+        // যদি কোনো নতুন রেকর্ড না থাকে, তবে লুপ ভেঙে বের হয়ে যাবো
         if (records.length === 0) {
           hasNextPage = false;
           break;
@@ -556,24 +573,58 @@ const RFQService = {
     return {
       synced: syncedCount,
       items: syncedItems,
-      message: `Successfully synced ${syncedCount} new/updated records.`
+      message: `Successfully synced ${syncedCount} new/updated records.`,
     };
   },
 
   // ⭐ Helper: NGEN এর ডাটাকে আপনার DB ফরম্যাটে রূপান্তর ও সেভ করা
+  // ⭐ Helper: NGEN এর ডাটাকে আপনার DB ফরম্যাটে রূপান্তর ও সেভ করা
   async upsertNgenRfq(r) {
-    const createdAtDate = r.createdAt ? new Date(r.createdAt) : new Date();
-    const dateStr = createdAtDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    const timeStr = createdAtDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    // 1. আসল সময় নির্ধারণ: r.date + r.time থাকলে সেটিকে +06:00 (Dhaka) ধরব, নাহলে r.createdAt (UTC) ব্যবহার করব
+    let exactCreatedDate;
+    if (r.date && r.time && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date).trim())) {
+      exactCreatedDate = new Date(`${String(r.date).trim()}T${String(r.time).trim()}+06:00`);
+    } else {
+      exactCreatedDate = r.createdAt ? new Date(r.createdAt) : new Date();
+    }
+
+    if (isNaN(exactCreatedDate.getTime())) {
+      exactCreatedDate = new Date();
+    }
+
+    // 2. সবসময় Asia/Dhaka টাইমজোনে date এবং time ফরম্যাট করা (যেমন: 22 Nov 2026 ও 03:17 PM)
+    const dateStr = exactCreatedDate.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'Asia/Dhaka',
+    });
+    const timeStr = exactCreatedDate.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Dhaka',
+    });
+
+    const agingDays = Math.floor(
+      (Date.now() - exactCreatedDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
 
     const updateData = {
-      ngen_id: String(r._id), // 👈 এই লাইনটি মিসিং ছিল, এটি অবশ্যই দিতে হবে!
+      ngen_id: String(r._id),
       rfqNumber: r.rfqNumber ? `${r.rfqNumber}-${r._id}` : `NGEN-${r._id}`,
+      rfqReferenceId:
+        r.rfqReferenceId ||
+        r.referenceId ||
+        r.rfqNumber ||
+        `REF-${r._id}`,
       company: r.company || r.clientName || 'Unknown Company',
       country: r.country || r.clientCountry || 'Unknown',
       date: dateStr,
       time: timeStr,
-      inquiryDate: r.inquiryDate || r.date,
+      // ⭐ আসল সময়সহ Date অবজেক্ট সেভ করা, যাতে ফ্রন্টএন্ডে 06:00 AM না দেখায়
+      inquiryDate: exactCreatedDate,
+      agingDays: Number.isNaN(agingDays) ? 0 : agingDays,
       stage: r.stage || 'pending',
       priority: r.priority || 'normal',
       salesman: r.salesman || 'Unassigned',
@@ -597,8 +648,8 @@ const RFQService = {
 
       // Nested objects
       shipping: r.shipping ? {
-        companyName: r.shipping.company || '',
-        contactName: r.shipping.name || '',
+        companyName: r.shipping.companyName || r.shipping.company || '',
+        contactName: r.shipping.contactName || r.shipping.name || '',
         email: r.shipping.email || '',
         phone: r.shipping.phone || '',
         address: r.shipping.address || '',
@@ -608,8 +659,8 @@ const RFQService = {
       } : undefined,
 
       endUser: r.endUser ? {
-        companyName: r.endUser.company || '',
-        contactName: r.endUser.name || '',
+        companyName: r.endUser.companyName || r.endUser.company || '',
+        contactName: r.endUser.contactName || r.endUser.name || '',
         email: r.endUser.email || '',
         phone: r.endUser.phone || '',
         address: r.endUser.address || '',
@@ -630,10 +681,9 @@ const RFQService = {
         description: p.description || '',
         additionalInfo: p.additionalInfo || '',
         files: [],
-      }))
+      })),
     };
 
-    // ⭐ IDEMPOTENT UPSERT: ngen_id দিয়ে খুঁজবে, না পেলে তৈরি করবে এবং পেলে আপডেট করবে
     await RFQ.updateOne(
       { ngen_id: String(r._id) },
       { $set: updateData },
