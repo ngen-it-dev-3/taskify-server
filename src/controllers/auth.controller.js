@@ -977,130 +977,6 @@ const sendAdminCreatedWelcomeEmail = async (user, tempPassword) => {
     return { success: false, error: error.message };
   }
 };
-// ============================================================
-// GET ALL USERS
-// ============================================================
-// const getAllUsers = async (req, res) => {
-//   try {
-//     const user = req.user;
-//     let query = {};
-
-//     // ========== ROLE-BASED FILTERING ==========
-//     if (
-//       user.role === "super_admin" ||
-//       user.role === "admin" ||
-//       user.role === "hr_manager"
-//     ) {
-//       // Can see all users
-//     } else if (user.role === "dept_manager") {
-//       if (user.department) {
-//         query.department = user.department;
-//       } else {
-//         return res.json({
-//           success: true,
-//           data: [],
-//           pagination: { page: 1, limit: 100, total: 0, pages: 0 },
-//         });
-//       }
-//     } else if (user.role === "project_manager") {
-//       const projects = await Project.find({
-//         projectManager: user._id,
-//       }).select("teamMembers");
-
-//       const teamMemberIds = projects.flatMap(
-//         (p) => p.teamMembers?.map((m) => m.userId) || [],
-//       );
-//       teamMemberIds.push(user._id);
-
-//       if (teamMemberIds.length > 0) {
-//         query._id = { $in: teamMemberIds };
-//       } else {
-//         return res.json({
-//           success: true,
-//           data: [],
-//           pagination: { page: 1, limit: 100, total: 0, pages: 0 },
-//         });
-//       }
-//     } else if (user.role === "line_manager") {
-//       const teamMembers = await User.find({ managerId: user._id }).select("_id");
-//       const memberIds = teamMembers.map((m) => m._id);
-//       memberIds.push(user._id);
-
-//       if (memberIds.length > 0) {
-//         query._id = { $in: memberIds };
-//       } else {
-//         return res.json({
-//           success: true,
-//           data: [],
-//           pagination: { page: 1, limit: 100, total: 0, pages: 0 },
-//         });
-//       }
-//     } else {
-//       query._id = user._id;
-//     }
-
-//     // Additional filters
-//     if (
-//       req.query.department &&
-//       (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")
-//     ) {
-//       query.department = req.query.department;
-//     }
-
-//     if (
-//       req.query.role &&
-//       (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")
-//     ) {
-//       query.role = req.query.role;
-//     }
-
-//     if (req.query.search) {
-//       const searchRegex = new RegExp(req.query.search, "i");
-//       query.$or = [
-//         { fullName: searchRegex },
-//         { email: searchRegex },
-//         { employeeId: searchRegex },
-//       ];
-//     }
-
-//     const page = parseInt(req.query.page) || 1;
-//     const limit = parseInt(req.query.limit) || 100;
-//     const skip = (page - 1) * limit;
-
-//     const users = await User.find(query)
-//       .select("-password")
-//       .populate("department", "name code")
-//       .populate("roles", "name code level")
-//       .populate("employment.manager", "fullName email")
-//       .sort({ createdAt: -1 })
-//       .skip(skip)
-//       .limit(limit);
-
-//     const total = await User.countDocuments(query);
-
-//     const usersWithPhoto = users.map((u) => {
-//       const obj = u.toObject();
-//       return ensureProfilePhoto(obj);
-//     });
-
-//     res.json({
-//       success: true,
-//       data: usersWithPhoto,
-//       pagination: {
-//         page,
-//         limit,
-//         total,
-//         pages: Math.ceil(total / limit),
-//       },
-//     });
-//   } catch (error) {
-//     console.error("Get all users error:", error);
-//     res.status(500).json({
-//       success: false,
-//       message: "Server error: " + error.message,
-//     });
-//   }
-// };
 
 // ============================================================
 // GET ALL USERS
@@ -1200,6 +1076,7 @@ const getAllUsers = async (req, res) => {
     const users = await User.find(query)
       .select("-password")
       .populate("department", "name code")
+      .populate("departmentId", "name code")
       .populate("roles", "name code level")
       .populate("employment.manager", "fullName email")
       .sort({ createdAt: -1 })
@@ -1301,6 +1178,8 @@ const updateUser = async (req, res) => {
         isActive,
         department,
         employeeId,
+        position,
+        location,
         ...(req.body.roles && { roles: req.body.roles }),
       },
       { new: true, runValidators: true },
