@@ -986,16 +986,20 @@ const getAllUsers = async (req, res) => {
     const user = req.user;
     let query = {};
 
-    // ========== ROLE-BASED FILTERING ==========
-    if (
+    const isPrivileged =
       user.role === "super_admin" ||
       user.role === "admin" ||
-      user.role === "hr_manager"
-    ) {
-      // Can see all users
+      user.role === "hr_manager";
+
+    // ========== ROLE-BASED FILTERING ==========
+    if (isPrivileged) {
+      // Can see all users (both active and inactive)
     } else if (user.role === "dept_manager") {
       if (user.department) {
-        query.department = user.department;
+        query.$or = [
+          { department: user.department },
+          { departmentId: user.department },
+        ];
       } else {
         return res.json({
           success: true,
@@ -1037,37 +1041,44 @@ const getAllUsers = async (req, res) => {
         });
       }
     } else {
-      // ✅ FIX: Allow employees to see all users (for chat)
-      // Remove the restriction: query._id = user._id;
-      // No filter - they can see all active users
+      // Regular employees only see active users (for chat/directory)
+      query.isActive = true;
     }
 
     // Additional filters
-    if (
-      req.query.department &&
-      (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")
-    ) {
-      query.department = req.query.department;
+    if (req.query.department && isPrivileged) {
+      query.$and = [
+        ...(query.$and || []),
+        {
+          $or: [
+            { department: req.query.department },
+            { departmentId: req.query.department },
+          ],
+        },
+      ];
     }
 
-    if (
-      req.query.role &&
-      (user.role === "super_admin" || user.role === "admin" || user.role === "hr_manager")
-    ) {
+    if (req.query.role && isPrivileged) {
       query.role = req.query.role;
+    }
+
+    if (req.query.isActive !== undefined) {
+      query.isActive = req.query.isActive === "true";
     }
 
     if (req.query.search) {
       const searchRegex = new RegExp(req.query.search, "i");
-      query.$or = [
-        { fullName: searchRegex },
-        { email: searchRegex },
-        { employeeId: searchRegex },
+      query.$and = [
+        ...(query.$and || []),
+        {
+          $or: [
+            { fullName: searchRegex },
+            { email: searchRegex },
+            { employeeId: searchRegex },
+          ],
+        },
       ];
     }
-
-    // ✅ Only show active users
-    query.isActive = true;
 
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 100;
@@ -1147,10 +1158,26 @@ const getUserProfile = async (req, res) => {
 // ============================================================
 // UPDATE USER (Admin only)
 // ============================================================
+// ============================================================
+// UPDATE USER (Admin / HR Manager)
+// ============================================================
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fullName, phoneNumber, role, isActive, department, employeeId } = req.body;
+    const {
+      fullName,
+      phone,
+      phoneNumber,
+      role,
+      roles,
+      isActive,
+      department,
+      departmentId,
+      employeeId,
+      position,
+      location,
+      bio,
+    } = req.body;
 
     const currentUser = await User.findById(id);
     if (!currentUser) {
@@ -1162,30 +1189,52 @@ const updateUser = async (req, res) => {
 
     const oldDepartment = currentUser.department?.toString();
 
-    if (req.body.roles) {
-      const roleDoc = await Role.findById(req.body.roles[0]);
+    // Resolve department from either `department` or `departmentId`
+    let resolvedDept = currentUser.department;
+    if (department !== undefined) {
+      resolvedDept = department || null;
+    } else if (departmentId !== undefined) {
+      resolvedDept = departmentId || null;
+    }
+
+    // Resolve role
+    let resolvedRole = role !== undefined ? role : currentUser.role;
+    if (roles && Array.isArray(roles) && roles.length > 0) {
+      const roleDoc = await Role.findById(roles[0]);
       if (roleDoc) {
-        req.body.role = roleDoc.code.toLowerCase();
+        resolvedRole = roleDoc.code.toLowerCase();
       }
+    }
+
+    // Build clean update object (only defined fields)
+    const updateFields = {
+      department: resolvedDept,
+      departmentId: resolvedDept,
+      role: resolvedRole,
+    };
+
+    if (fullName !== undefined) updateFields.fullName = fullName.trim();
+    if (isActive !== undefined) updateFields.isActive = Boolean(isActive);
+    if (employeeId !== undefined) updateFields.employeeId = employeeId;
+    if (position !== undefined) updateFields.position = position;
+    if (location !== undefined) updateFields.location = location;
+    if (bio !== undefined) updateFields.bio = bio;
+    if (roles !== undefined) updateFields.roles = roles;
+
+    if (phoneNumber !== undefined || phone !== undefined) {
+      const resolvedPhone = phoneNumber !== undefined ? phoneNumber : phone;
+      updateFields.phoneNumber = resolvedPhone;
+      updateFields.phone = resolvedPhone;
     }
 
     const user = await User.findByIdAndUpdate(
       id,
-      {
-        fullName,
-        phoneNumber,
-        role,
-        isActive,
-        department,
-        employeeId,
-        position,
-        location,
-        ...(req.body.roles && { roles: req.body.roles }),
-      },
-      { new: true, runValidators: true },
+      { $set: updateFields },
+      { new: true, runValidators: true }
     )
       .select("-password")
       .populate("department", "name code")
+      .populate("departmentId", "name code")
       .populate("roles", "name code level");
 
     if (!user) {
@@ -1195,7 +1244,9 @@ const updateUser = async (req, res) => {
       });
     }
 
-    if (department && department !== oldDepartment) {
+    // Update department employee counts if department changed
+    const newDepartment = resolvedDept ? resolvedDept.toString() : null;
+    if (newDepartment !== oldDepartment) {
       const { Department } = require("../models/Department.model");
       if (oldDepartment) {
         const oldDept = await Department.findById(oldDepartment);
@@ -1203,8 +1254,8 @@ const updateUser = async (req, res) => {
           await oldDept.updateEmployeeCount();
         }
       }
-      if (department) {
-        const newDept = await Department.findById(department);
+      if (newDepartment) {
+        const newDept = await Department.findById(newDepartment);
         if (newDept) {
           await newDept.updateEmployeeCount();
         }
