@@ -224,6 +224,7 @@ const tenderClientRoutes = require("./src/routes/tenderClient.routes");
 const employeeFileRoutes = require("./src/routes/employeeFile.routes");
 const hrDocumentsRoutes = require("./src/routes/hrDocuments.routes");
 const recruitmentRoutes = require("./src/routes/recruitment.routes");
+const noticesMeetingsRoutes = require("./src/routes/noticesMeetings.routes");
 
 
 app.use("/api/v1/auth", authRoutes);
@@ -273,6 +274,7 @@ app.use("/api/v1/tender-clients", tenderClientRoutes);
 app.use("/api/v1/employee-files", employeeFileRoutes);
 app.use("/api/v1/hr-documents", hrDocumentsRoutes);
 app.use("/api/v1/recruitment", recruitmentRoutes);
+app.use("/api/v1/notices-meetings", noticesMeetingsRoutes);
 
 
 // ==================== HEALTH ====================
