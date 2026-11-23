@@ -106,8 +106,8 @@ app.use(
 app.options("*", cors());
 
 app.use(compression());
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 app.use(cookieParser());
 app.use(limiter);
 
@@ -134,6 +134,8 @@ const directories = [
   { path: path.join(uploadsPath, "agreements"), name: "agreements" },
   { path: path.join(uploadsPath, "security-docs"), name: "security-docs" },
   { path: path.join(uploadsPath, "employee-docs"), name: "employee-docs" },
+  { path: path.join(uploadsPath, "hr-documents"), name: "hr-documents" },
+  { path: path.join(uploadsPath, "recruitment-cvs"), name: "recruitment-cvs" }
 ];
 
 for (const dir of directories) {
@@ -220,6 +222,8 @@ const tenantRoutes = require("./src/routes/tenant.routes");
 const credentialRoutes = require("./src/routes/credential.routes");
 const tenderClientRoutes = require("./src/routes/tenderClient.routes");
 const employeeFileRoutes = require("./src/routes/employeeFile.routes");
+const hrDocumentsRoutes = require("./src/routes/hrDocuments.routes");
+const recruitmentRoutes = require("./src/routes/recruitment.routes");
 
 
 app.use("/api/v1/auth", authRoutes);
@@ -267,6 +271,8 @@ app.use("/api/v1/tenant", tenantRoutes);
 app.use("/api/v1/credentials", credentialRoutes);
 app.use("/api/v1/tender-clients", tenderClientRoutes);
 app.use("/api/v1/employee-files", employeeFileRoutes);
+app.use("/api/v1/hr-documents", hrDocumentsRoutes);
+app.use("/api/v1/recruitment", recruitmentRoutes);
 
 
 // ==================== HEALTH ====================
