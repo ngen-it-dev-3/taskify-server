@@ -23,7 +23,7 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
-// cPanel/Nginx reverse proxy এর পেছনে সঠিক IP পাওয়ার জন্য
+// Trust proxy for cPanel/Nginx reverse proxy (correct client IP)
 app.set("trust proxy", 1);
 
 // ==================== CRON IMPORTS ====================
@@ -34,7 +34,7 @@ const { RFQService } = require("./src/services/rfq/rfq.service");
 const { startZKSync } = require("./src/services/zkSyncService");
 
 // ==================== SOCKET.IO ====================
-// আপনার কাস্টম ফাংশনটি কল করা হচ্ছে (এখানে server পাস করতে হবে)
+// Custom initializer — receives the HTTP server instance
 const { initializeSocket } = require("./src/socket/index");
 const io = initializeSocket(server);
 app.set("io", io);
@@ -60,14 +60,25 @@ const limiter = rateLimit({
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
-  }),
+    crossOriginEmbedderPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        frameAncestors: ["*"], // Allow all domains to iframe this
+      },
+    },
+    frameguard: false, // X-Frame-Options disable
+  })
 );
 
-// CORS কনফিগারেশন
+// CORS configuration
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5000",
   "http://localhost:3001",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5000",
+  "http://127.0.0.1:3001",
   "https://taskify-frontend-alpha.vercel.app",
   "https://orvix.ngengroup.org",
   "https://orvix-backend.ngengroup.org",
@@ -102,7 +113,7 @@ app.use(
   }),
 );
 
-// OPTIONS রিকোয়েস্ট হ্যান্ডেল করা (cPanel/Passenger এ এরর এড়াতে)
+// Handle OPTIONS preflight (avoids issues on cPanel/Passenger)
 app.options("*", cors());
 
 app.use(compression());
@@ -112,12 +123,11 @@ app.use(cookieParser());
 app.use(limiter);
 
 // ==================== STATIC FILES ====================
-// ✅ Revert to the simplest, most reliable path
+// ✅ Simple, reliable uploads path
 const uploadsPath = path.join(__dirname, "uploads");
 
 console.log(`📁 Uploads directory: ${uploadsPath}`);
-
-console.log(`📁 Uploads directory (STatic): ${uploadsPath}`);
+console.log(`📁 Uploads directory (STATIC): ${uploadsPath}`);
 
 const directories = [
   { path: uploadsPath, name: "uploads" },
@@ -144,6 +154,14 @@ for (const dir of directories) {
     console.log(`📁 Created ${dir.name} directory`);
   }
 }
+
+// ✅ CORS headers for /uploads — MUST be before express.static
+// Without this, browsers block cross-origin <iframe>/<img> loads of PDFs/images
+app.use("/uploads", (req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  next();
+});
 
 app.use(
   "/uploads",
@@ -305,7 +323,7 @@ app.get("/", (req, res) => {
       return res.status(500).send("Dashboard UI file missing.");
     }
 
-    // Inject the values directly into the HTML
+    // Inject runtime values into the HTML
     let finalHtml = html
       .replace(/id="uptime">Uptime: Loading.../g, `id="uptime">Uptime: ${uptimeFormatted}`)
       .replace(/id="env-mode">loading/g, `id="env-mode">${envMode}`)
@@ -400,15 +418,13 @@ function startCrawlCron() {
   console.log("✅ Cron scheduler started (daily tender crawl)");
 }
 
-// ⭐ নতুন RFQ Sync Cron
+// ⭐ RFQ Sync Cron — runs every 1 minute
 function startRfqSyncCron() {
-  // "* * * * *" মানে প্রতি ১ মিনিটে একবার রান হবে
   cron.schedule("* * * * *", async () => {
     try {
-      // রিকোয়েস্ট লগে স্প্যাম এড়াতে চাইলে চাইলে এখানে কন্ডিশন দিতে পারেন
       const result = await RFQService.syncFromWebPortal();
 
-      // যদি নতুন ডাটা সিঙ্ক হয় তবেই কনসোলে প্রিন্ট করবে
+      // Only log when new data was actually synced
       if (result.synced > 0) {
         console.log(`[RFQ Cron] Successfully auto-synced ${result.synced} RFQs from NGEN Web Portal.`);
       }
@@ -442,8 +458,10 @@ const startServer = async () => {
   } else {
     console.warn("⚠️  Cron skipped (no DB)");
   }
-  // cPanel/Passenger এর জন্য app.listen ব্যবহার করা বাধ্যতামূলক
-  app.listen(PORT, () => {
+
+  // ✅ Use server.listen (NOT app.listen) so Socket.io shares the same HTTP server
+  // Using app.listen would create a separate HTTP server and break Socket.io.
+  server.listen(PORT, () => {
     console.log(`\n📡 Server:          http://localhost:${PORT}`);
     console.log(`🌍 Environment:     ${process.env.NODE_ENV || "development"}`);
     console.log(`💾 Database:        ${dbConnected ? "Connected ✅" : "Disconnected ⚠️"}`);

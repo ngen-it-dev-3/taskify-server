@@ -14,7 +14,14 @@ const hasManagerAccess = (user) => {
   const role = String(user?.role || "")
     .toLowerCase()
     .replace(/\s+/g, "_");
-  return MANAGER_ROLES.has(role);
+  if (MANAGER_ROLES.has(role)) return true;
+
+  if (Array.isArray(user?.roles)) {
+    return user.roles.some((r) =>
+      MANAGER_ROLES.has(String(r?.code || r || "").toLowerCase().replace(/\s+/g, "_"))
+    );
+  }
+  return false;
 };
 
 // ==========================================
@@ -157,7 +164,13 @@ exports.updateNotice = async (req, res) => {
 
     for (const field of updatableFields) {
       if (req.body[field] !== undefined) {
-        notice[field] = req.body[field];
+        if (field === "expiresAt") {
+          notice.expiresAt = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
+        } else if (typeof req.body[field] === "string") {
+          notice[field] = req.body[field].trim();
+        } else {
+          notice[field] = req.body[field];
+        }
       }
     }
 
@@ -381,13 +394,13 @@ exports.createMeeting = async (req, res) => {
       title: String(title).trim(),
       withAttendees: String(withAttendees).trim(),
       type,
-      venue: type === "In-Person" ? String(venue || "").trim() : String(venue || "").trim(),
+      venue: String(venue || "").trim(),
       meetingLink:
         type === "Video Call"
           ? String(meetingLink || "").trim() ||
-            (canDirectlyConfirm
-              ? `https://meet.jit.si/orvix-${Date.now()}`
-              : "")
+          (canDirectlyConfirm
+            ? `https://meet.jit.si/orvix-${Date.now()}`
+            : "")
           : "",
       notes: String(notes || "").trim(),
       scheduledDate: validDate,
@@ -417,12 +430,23 @@ exports.createMeeting = async (req, res) => {
 
 exports.updateMeetingStatus = async (req, res) => {
   try {
-    const { status, scheduledDate, timeSlotLabel, meetingLink, venue } = req.body;
+    const {
+      title,
+      withAttendees,
+      type,
+      status,
+      scheduledDate,
+      timeSlotLabel,
+      preferredDateText,
+      meetingLink,
+      venue,
+      notes,
+    } = req.body;
 
     if (!hasManagerAccess(req.user)) {
       return res.status(403).json({
         success: false,
-        message: "Only HR, Admin, or Management can approve or decline meetings",
+        message: "Only HR, Admin, or Management can approve or update meetings",
       });
     }
 
@@ -434,14 +458,48 @@ exports.updateMeetingStatus = async (req, res) => {
       });
     }
 
-    if (status && ["Pending Approval", "Confirmed", "Declined", "Completed"].includes(status)) {
+    const hasContentUpdate = [
+      title,
+      withAttendees,
+      type,
+      scheduledDate,
+      timeSlotLabel,
+      preferredDateText,
+      meetingLink,
+      venue,
+      notes,
+    ].some((val) => val !== undefined);
+
+    if (typeof title === "string" && title.trim()) {
+      meeting.title = title.trim();
+    }
+
+    if (typeof withAttendees === "string" && withAttendees.trim()) {
+      meeting.withAttendees = withAttendees.trim();
+    }
+
+    if (type && ["Video Call", "In-Person", "Phone Call"].includes(type)) {
+      meeting.type = type;
+      if (type !== "Video Call") {
+        meeting.meetingLink = "";
+      }
+    }
+
+    if (
+      status &&
+      ["Pending Approval", "Confirmed", "Declined", "Completed"].includes(status)
+    ) {
       meeting.status = status;
     }
 
-    if (scheduledDate) {
-      const parsed = new Date(scheduledDate);
-      if (!Number.isNaN(parsed.getTime())) {
-        meeting.scheduledDate = parsed;
+    if (scheduledDate !== undefined) {
+      if (!scheduledDate) {
+        meeting.scheduledDate = null;
+      } else {
+        const parsed = new Date(scheduledDate);
+        if (!Number.isNaN(parsed.getTime())) {
+          meeting.scheduledDate = parsed;
+        }
       }
     }
 
@@ -449,12 +507,29 @@ exports.updateMeetingStatus = async (req, res) => {
       meeting.timeSlotLabel = timeSlotLabel.trim();
     }
 
+    if (typeof preferredDateText === "string") {
+      meeting.preferredDateText = preferredDateText.trim();
+    }
+
     if (typeof venue === "string") {
       meeting.venue = venue.trim();
     }
 
-    if (typeof meetingLink === "string" && meetingLink.trim()) {
-      meeting.meetingLink = meetingLink.trim();
+    if (typeof notes === "string") {
+      meeting.notes = notes.trim();
+    }
+
+    if (typeof meetingLink === "string") {
+      const trimmedLink = meetingLink.trim();
+      if (trimmedLink) {
+        meeting.meetingLink = trimmedLink;
+      } else if (
+        meeting.status === "Confirmed" &&
+        meeting.type === "Video Call" &&
+        !meeting.meetingLink
+      ) {
+        meeting.meetingLink = `https://meet.jit.si/orvix-${meeting._id}`;
+      }
     } else if (
       meeting.status === "Confirmed" &&
       meeting.type === "Video Call" &&
@@ -469,7 +544,9 @@ exports.updateMeetingStatus = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Meeting marked as ${meeting.status}`,
+      message: hasContentUpdate
+        ? "Meeting updated successfully"
+        : `Meeting marked as ${meeting.status}`,
       data: meeting,
     });
   } catch (error) {

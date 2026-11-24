@@ -5,9 +5,9 @@ const path = require("path");
 // Create a new file record
 exports.createFile = async (req, res) => {
   try {
-    const { 
-      title, category, issueDate, expiryDate, employeeId, 
-      documentNumber, notes, description, tags 
+    const {
+      title, category, issueDate, expiryDate, employeeId,
+      documentNumber, notes, description, tags
     } = req.body;
 
     if (!req.file) {
@@ -97,6 +97,64 @@ exports.deleteFile = async (req, res) => {
     await file.deleteOne();
     res.status(200).json({ success: true, message: "File deleted" });
   } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Update an existing file record (metadata + optional file replacement)
+exports.updateFile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const file = await EmployeeFile.findById(id);
+
+    if (!file) {
+      return res.status(404).json({ success: false, message: "File not found" });
+    }
+
+    // --- Update metadata fields (only if provided) ---
+    const {
+      title, category, issueDate, expiryDate,
+      documentNumber, notes, description, tags,
+    } = req.body;
+
+    if (title !== undefined) file.title = title;
+    if (category !== undefined) file.category = category;
+    if (issueDate !== undefined) file.issueDate = issueDate;
+    if (expiryDate !== undefined) file.expiryDate = expiryDate || null;
+    if (documentNumber !== undefined) file.documentNumber = documentNumber;
+    if (notes !== undefined) file.notes = notes;
+    if (description !== undefined) file.description = description;
+
+    if (tags !== undefined) {
+      file.tags = typeof tags === "string"
+        ? tags.split(",").map((t) => t.trim()).filter(Boolean)
+        : tags;
+    }
+
+    // --- Handle optional file replacement ---
+    if (req.file) {
+      // Delete the old file from disk
+      const oldFileName = file.fileUrl.split("/").pop();
+      const oldFilePath = path.join(__dirname, "../../uploads/employee-docs", oldFileName);
+      if (fs.existsSync(oldFilePath)) {
+        fs.unlinkSync(oldFilePath);
+      }
+
+      // Point to the new file
+      file.fileUrl = `/uploads/employee-docs/${req.file.filename}`;
+      file.fileType = req.file.mimetype;
+      file.fileSize = req.file.size;
+    }
+
+    await file.save();
+
+    res.status(200).json({
+      success: true,
+      data: file,
+      message: "File updated successfully",
+    });
+  } catch (error) {
+    console.error("Update File Error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };

@@ -8,6 +8,8 @@ const {
     getOverview,
     listPositions,
     createPosition,
+    updatePosition,
+    deletePosition,
     listCandidates,
     createCandidate,
     updateCandidate,
@@ -63,6 +65,9 @@ router.get("/overview", getOverview);
 // Open Positions
 router.get("/positions", listPositions);
 router.post("/positions", hrRoles, createPosition);
+router.patch("/positions/:id", hrRoles, updatePosition);
+router.put("/positions/:id", hrRoles, updatePosition);
+router.delete("/positions/:id", hrRoles, deletePosition);
 
 // Candidates & CV Bank
 router.get("/candidates", listCandidates);

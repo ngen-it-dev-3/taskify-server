@@ -163,6 +163,94 @@ const createPosition = async (req, res) => {
   }
 };
 
+const updatePosition = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid position ID" });
+    }
+
+    const { title, department, stage, targetStartDate, description } = req.body;
+    const updates = { updatedBy: req.user._id };
+
+    if (title !== undefined) {
+      if (!String(title).trim()) {
+        return res.status(400).json({ success: false, message: "Title cannot be empty" });
+      }
+      updates.title = String(title).trim();
+    }
+
+    if (department !== undefined) {
+      if (!String(department).trim()) {
+        return res.status(400).json({ success: false, message: "Department cannot be empty" });
+      }
+      updates.department = String(department).trim();
+    }
+
+    if (stage !== undefined) {
+      updates.stage = stage;
+    }
+
+    if (description !== undefined) {
+      updates.description = String(description || "").trim();
+    }
+
+    if (targetStartDate !== undefined) {
+      updates.targetStartDate = targetStartDate ? new Date(targetStartDate) : null;
+    }
+
+    const updated = await JobPosition.findOneAndUpdate(
+      { _id: id, isActive: true },
+      { $set: updates },
+      { new: true, runValidators: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ success: false, message: "Position not found" });
+    }
+
+    const candidateCount = await Candidate.countDocuments({
+      isActive: true,
+      positionId: updated._id,
+    });
+
+    return res.json({
+      success: true,
+      message: "Position updated",
+      data: { ...updated.toObject(), candidateCount },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deletePosition = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid position ID" });
+    }
+
+    const deleted = await JobPosition.findOneAndUpdate(
+      { _id: id, isActive: true },
+      { $set: { isActive: false, updatedBy: req.user._id } },
+      { new: true }
+    );
+
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: "Position not found" });
+    }
+
+    return res.json({
+      success: true,
+      message: "Position deleted",
+      data: deleted,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // CANDIDATES & CV BANK
 const listCandidates = async (req, res) => {
   try {
@@ -651,6 +739,8 @@ module.exports = {
   getOverview,
   listPositions,
   createPosition,
+  updatePosition,
+  deletePosition,
   listCandidates,
   createCandidate,
   updateCandidate,
