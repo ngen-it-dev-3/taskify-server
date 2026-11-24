@@ -241,10 +241,12 @@ const createDocument = async (req, res) => {
 };
 
 // ============================================================
-// PUT /api/hr-documents/:id (Update metadata or replace file)
+// PUT / PATCH /api/hr-documents/:id (Update metadata or replace file)
 // ============================================================
 const updateDocument = async (req, res) => {
     try {
+        ensureUploadDir();
+
         const { id } = req.params;
         if (!mongoose.Types.ObjectId.isValid(id)) {
             if (req.file?.path) safeUnlink(req.file.path);
