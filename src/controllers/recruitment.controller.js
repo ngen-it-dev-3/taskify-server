@@ -1,4 +1,3 @@
-// src/controllers/recruitment.controller.js
 const fs = require("fs");
 const path = require("path");
 const mongoose = require("mongoose");
@@ -370,6 +369,8 @@ const createCandidate = async (req, res) => {
         ? Math.min(100, Math.max(0, Number(testScore)))
         : null;
 
+    const isBlacklisted = blacklisted === true || blacklisted === "true";
+
     const created = await Candidate.create({
       fullName: String(fullName).trim(),
       email: String(email || "").trim().toLowerCase(),
@@ -384,10 +385,12 @@ const createCandidate = async (req, res) => {
       positionId: validPosId,
       positionAppliedLabel: resolvedPosTitle || "Unlinked / Speculative",
       source: String(source || "Online Test Portal").trim(),
-      stage,
+      stage: isBlacklisted ? "Not Selected" : stage,
       testScore: Number.isNaN(parsedScore) ? null : parsedScore,
-      blacklisted: blacklisted === true || blacklisted === "true",
-      blacklistReason: String(blacklistReason || "").trim(),
+      blacklisted: isBlacklisted,
+      blacklistReason: isBlacklisted
+        ? String(blacklistReason || "").trim() || "Policy violation"
+        : String(blacklistReason || "").trim(),
       cvFileName: cvMeta?.cvFileName || "CV.pdf",
       cvFileUrl: cvMeta?.cvFileUrl || "",
       cvFilePath: cvMeta?.cvFilePath || "",
@@ -415,37 +418,195 @@ const createCandidate = async (req, res) => {
 
 const updateCandidate = async (req, res) => {
   try {
+    ensureCvDir();
     const { id } = req.params;
     if (!mongoose.Types.ObjectId.isValid(id)) {
+      if (req.file?.path) safeUnlink(req.file.path);
       return res.status(400).json({ success: false, message: "Invalid candidate ID" });
     }
 
+    const existing = await Candidate.findOne({ _id: id, isActive: true });
+    if (!existing) {
+      if (req.file?.path) safeUnlink(req.file.path);
+      return res.status(404).json({ success: false, message: "Candidate not found" });
+    }
+
+    const wantsBlacklisted =
+      req.body.blacklisted === true ||
+      req.body.blacklisted === "true" ||
+      req.body.autoBlacklist === true ||
+      req.body.autoBlacklist === "true";
+
+    const isCurrentlyBlacklisted = Boolean(existing.blacklisted) || wantsBlacklisted;
+
+    // Cannot update/replace CV of a blacklisted candidate; automatically keep blacklisted
+    if (isCurrentlyBlacklisted && req.file) {
+      safeUnlink(req.file.path);
+      const reason =
+        String(req.body.blacklistReason || "").trim() ||
+        existing.blacklistReason ||
+        "Policy violation";
+
+      const autoUpdated = await Candidate.findOneAndUpdate(
+        { _id: id, isActive: true },
+        {
+          $set: {
+            blacklisted: true,
+            blacklistReason: reason,
+            stage: "Not Selected",
+            updatedBy: req.user._id,
+          },
+        },
+        { new: true }
+      ).populate("positionId", "title department");
+
+      return res.status(400).json({
+        success: false,
+        message:
+          "Cannot update a blacklisted candidate's CV. Candidate is automatically blacklisted.",
+        data: autoUpdated,
+      });
+    }
+
     const updates = { updatedBy: req.user._id };
-    if (req.body.stage !== undefined) updates.stage = req.body.stage;
+
+    if (req.body.fullName !== undefined) {
+      if (!String(req.body.fullName).trim()) {
+        if (req.file?.path) safeUnlink(req.file.path);
+        return res.status(400).json({ success: false, message: "Candidate name is required" });
+      }
+      updates.fullName = String(req.body.fullName).trim();
+    }
+
+    if (req.body.email !== undefined) {
+      updates.email = String(req.body.email || "").trim().toLowerCase();
+    }
+
+    if (req.body.phone !== undefined) {
+      updates.phone = String(req.body.phone || "").trim();
+    }
+
+    if (req.body.gender !== undefined) {
+      updates.gender = ["Male", "Female", "Other"].includes(req.body.gender)
+        ? req.body.gender
+        : "";
+    }
+
+    if (req.body.department !== undefined) {
+      updates.department = String(req.body.department || "").trim();
+    }
+
+    if (req.body.experienceYears !== undefined) {
+      updates.experienceYears = Math.max(0, Number(req.body.experienceYears) || 0);
+    }
+
+    if (req.body.interviewedBefore !== undefined) {
+      updates.interviewedBefore =
+        req.body.interviewedBefore === true ||
+        req.body.interviewedBefore === "true" ||
+        req.body.interviewedBefore === "yes";
+    }
+
+    if (req.body.positionId !== undefined) {
+      if (!req.body.positionId) {
+        updates.positionId = null;
+        updates.positionAppliedLabel =
+          String(req.body.positionAppliedLabel || "").trim() || "Unlinked / Speculative";
+      } else if (mongoose.Types.ObjectId.isValid(req.body.positionId)) {
+        updates.positionId = req.body.positionId;
+        const posDoc = await JobPosition.findById(req.body.positionId).select("title");
+        updates.positionAppliedLabel =
+          String(req.body.positionAppliedLabel || "").trim() ||
+          posDoc?.title ||
+          existing.positionAppliedLabel ||
+          "";
+      }
+    } else if (req.body.positionAppliedLabel !== undefined) {
+      updates.positionAppliedLabel = String(req.body.positionAppliedLabel).trim();
+    }
+
+    if (req.body.source !== undefined) {
+      updates.source = String(req.body.source || "").trim() || "Online Test Portal";
+    }
+
+    if (req.body.stage !== undefined) {
+      updates.stage = req.body.stage;
+    }
+
     if (req.body.testScore !== undefined) {
       updates.testScore =
         req.body.testScore === null || String(req.body.testScore).trim() === ""
           ? null
           : Math.min(100, Math.max(0, Number(req.body.testScore)));
     }
-    if (req.body.blacklisted !== undefined) {
-      updates.blacklisted = Boolean(req.body.blacklisted);
+
+    if (req.body.notes !== undefined) {
+      updates.notes = String(req.body.notes || "").trim();
     }
-    if (req.body.blacklistReason !== undefined) {
+
+    let previousCvPath = null;
+    if (req.file) {
+      const cvMeta = extractCvMeta(req.file);
+      if (cvMeta?.error) {
+        return res.status(400).json({ success: false, message: cvMeta.error });
+      }
+      previousCvPath = existing.cvFilePath;
+      updates.cvFileName = cvMeta.cvFileName;
+      updates.cvFileUrl = cvMeta.cvFileUrl;
+      updates.cvFilePath = cvMeta.cvFilePath;
+      updates.cvFileSize = cvMeta.cvFileSize;
+    }
+
+    if (req.body.blacklisted !== undefined || req.body.autoBlacklist !== undefined) {
+      updates.blacklisted = wantsBlacklisted;
+      if (wantsBlacklisted) {
+        updates.blacklistReason =
+          String(req.body.blacklistReason || "").trim() ||
+          existing.blacklistReason ||
+          "Policy violation";
+        updates.stage = "Not Selected";
+      } else if (req.body.blacklistReason !== undefined) {
+        updates.blacklistReason = String(req.body.blacklistReason).trim();
+      }
+    } else if (req.body.blacklistReason !== undefined) {
       updates.blacklistReason = String(req.body.blacklistReason).trim();
     }
 
     const updated = await Candidate.findOneAndUpdate(
       { _id: id, isActive: true },
       { $set: updates },
-      { new: true }
+      { new: true, runValidators: true }
     ).populate("positionId", "title department");
 
-    if (!updated) {
-      return res.status(404).json({ success: false, message: "Candidate not found" });
+    if (previousCvPath && previousCvPath !== updated.cvFilePath) {
+      safeUnlink(previousCvPath);
     }
 
     return res.json({ success: true, message: "Candidate updated", data: updated });
+  } catch (error) {
+    if (req.file?.path) safeUnlink(req.file.path);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteCandidate = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid candidate ID" });
+    }
+
+    const deleted = await Candidate.findOneAndUpdate(
+      { _id: id, isActive: true },
+      { $set: { isActive: false, updatedBy: req.user._id } },
+      { new: true }
+    );
+
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: "Candidate not found" });
+    }
+
+    return res.json({ success: true, message: "Candidate deleted", data: deleted });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -744,6 +905,7 @@ module.exports = {
   listCandidates,
   createCandidate,
   updateCandidate,
+  deleteCandidate,
   downloadCandidateCv,
   listTestsAndSubmissions,
   createTest,
